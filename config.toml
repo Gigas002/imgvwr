@@ -1,0 +1,13 @@
+[ui]
+title = false
+antialiasing = false
+theme = "tokyo_night"
+
+[viewer]
+min_scale = 0.0
+max_scale = 10.0
+scale_step = 0.05
+# filter_method = "linear"
+
+[keybindings]
+quit = "q"
