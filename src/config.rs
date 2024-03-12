@@ -27,16 +27,12 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load(path: PathBuf) -> Self {
-        if let Ok(mut config_file) = File::open(path) {
-            let mut config_str = String::new();
-            let _ = config_file.read_to_string(&mut config_str);
+    pub fn load(path: &PathBuf) -> Option<Config> {
+        let mut config_file = File::open(path).ok()?;
+        let mut config_str = String::new();
+        let _ = config_file.read_to_string(&mut config_str);
 
-            toml::from_str(&mut config_str).unwrap_or_else(|_| Config::default())
-        }
-        else {
-            Config::default()
-        }
+        toml::from_str(&mut config_str).ok()?
     }
 }
 

@@ -1,5 +1,6 @@
 pub mod args;
 pub mod config;
+pub mod util;
 
 use iced::{
     executor::Default as ExecutorDefault,
@@ -24,6 +25,7 @@ use iced::{
     window::Settings as WindowSettings,
 };
 use std::{
+    collections::HashMap,
     fs,
     path::PathBuf,
 };
@@ -36,8 +38,14 @@ use config::{
 };
 
 fn main() -> Result {
-    let args: Args = Args::parse();
-    let config = args.get_config();
+    let mut args: Args = Args::parse();
+    args.img = fs::canonicalize(&args.img).expect("Couldn't get absolute path for input image");
+    if !util::is_file_supported(&args.img).unwrap_or_default() {
+        // panic!("Input file extension not supported");
+        std::process::exit(0);
+    }
+
+    let config = args.get_config().unwrap_or_default();
     let flags = Flags::new(args, config);
 
     let ui_config = flags.config.ui.clone().unwrap_or_default();
@@ -54,7 +62,8 @@ fn main() -> Result {
 }
 
 struct Imgvwr {
-    image_path: PathBuf,
+    current_image_id: usize,
+    images: HashMap<usize, PathBuf>,
     min_scale: f32,
     max_scale: f32,
     scale: f32,
@@ -64,34 +73,47 @@ struct Imgvwr {
 }
 
 impl Imgvwr {
-    fn switch_image(&mut self, direction: Direction) {
-        let image_path = match direction {
-            Direction::Next => Imgvwr::next_image(self.image_path.clone()),
-            Direction::Previous => todo!(),
+    fn switch_current_image(&mut self, direction: Direction) {
+        let current_id = &self.current_image_id;
+        let min_id = self.images.keys().min().unwrap();
+        let max_id = self.images.keys().max().unwrap();
+
+        let image_id = match direction {
+            Direction::Next => {
+                match current_id + 1 {
+                    next_id if next_id > *max_id => *min_id,
+                    next_id => next_id,
+                }
+            },
+            Direction::Previous => {
+                match current_id.checked_sub(1) {
+                    Some(prev_id) => prev_id,
+                    None => *max_id,
+                }
+            }
         };
 
-        self.image_path = image_path.unwrap();
+        self.current_image_id = image_id;
     }
-    
-    fn next_image(image_path: PathBuf) -> Option<PathBuf> {
-        // TODO: this fn is a fucking shit and doesn't work properly
 
-        let file_name = image_path.file_name()?.to_str()?;
-        let dir = image_path.parent()?;
+    fn get_current_image_path(&self) -> Option<&PathBuf> {
+        self.images.get(&self.current_image_id)
+    }
 
-        let exts = vec!["jpg", "png"];
+    fn get_current_image(&self) -> Handle {
+        let image_path = self.get_current_image_path().unwrap();
 
-        for entry in fs::read_dir(dir).ok()? {
-            let entry_path = entry.ok()?.path();
-            let entry_name = entry_path.file_name()?.to_str()?;
-            let entry_ext = entry_path.extension()?.to_str()?;
+        // TODO: check if all `image` extensions are supported directly by iced
+        // and we don't need to load them through image create
 
-            if entry_path.is_file() && entry_name > file_name && exts.contains(&entry_ext) {
-                return Some(entry_path);
-            }
-        }
+        // let img = Reader::open(image_path)
+        //     .expect("Failed to open image file")
+        //     .decode()
+        //     .expect("Failed to decode image file");
+        // let img = image::DynamicImage::ImageRgba8(img.into_rgba8());
+        // Handle::from_pixels(img.width(), img.height(), img.into_bytes())
 
-        None
+        Handle::from_path(image_path)
     }
 }
 
@@ -127,9 +149,13 @@ impl Application for Imgvwr {
         let viewer = config.viewer.unwrap_or_default();
         let ui = config.ui.unwrap_or_default();
 
+        let images = util::get_files(&flags.args.img).expect("No files in input directory");
+        let current_image_id = util::get_current_file_id(&flags.args.img, &images).expect("Couldn't get input file id");
+
         (
             Imgvwr {
-                image_path: flags.args.img,
+                images,
+                current_image_id,
                 min_scale: viewer.min_scale.unwrap(),
                 max_scale: viewer.max_scale.unwrap(),
                 scale: viewer.scale_step.unwrap(),
@@ -142,6 +168,7 @@ impl Application for Imgvwr {
     }
 
     fn title(&self) -> String {
+        // TODO: add current file and/or app version
         "imgvwr".to_string()
     }
 
@@ -151,7 +178,8 @@ impl Application for Imgvwr {
                 std::process::exit(0);
             }
             Message::Move(direction) => {
-                self.switch_image(direction);
+                self.switch_current_image(direction);
+                // TODO: the previous viewer is killed... right?
                 self.view();
             }
         }
@@ -159,14 +187,7 @@ impl Application for Imgvwr {
     }
 
     fn view(&self) -> Element<Message> {
-        // let img = Reader::open(self.image_path.clone())
-        //     .expect("Failed to open image file")
-        //     .decode()
-        //     .expect("Failed to decode image file");
-        // let img = image::DynamicImage::ImageRgba8(img.into_rgba8());
-        // let handle = Handle::from_pixels(img.width(), img.height(), img.into_bytes());
-
-        let handle = Handle::from_path(self.image_path.clone());
+        let handle = self.get_current_image();
 
         let viewer = viewer(handle)
             .scale_step(self.scale)
