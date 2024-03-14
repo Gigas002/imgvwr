@@ -119,9 +119,11 @@ pub struct Viewer {
     pub max_scale: Option<f32>,
     pub scale_step: Option<f32>,
     pub filter_method: Option<FilterMethod>,
+    pub content_fit: Option<ContentFit>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FilterMethod {
     Linear,
     Nearest
@@ -142,6 +144,34 @@ impl Default for FilterMethod {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentFit {
+    Contain,
+    Cover,
+    Fill,
+    None,
+    ScaleDown,
+}
+
+impl From<ContentFit> for iced::ContentFit {
+    fn from(content_fit: ContentFit) -> Self {
+        match content_fit {
+            ContentFit::Contain => iced::ContentFit::Contain,
+            ContentFit::Cover => iced::ContentFit::Cover,
+            ContentFit::Fill => iced::ContentFit::Fill,
+            ContentFit::None => iced::ContentFit::None,
+            ContentFit::ScaleDown => iced::ContentFit::ScaleDown,
+        }
+    }
+}
+
+impl Default for ContentFit {
+    fn default() -> Self {
+        ContentFit::None
+    }
+}
+
 impl Default for Viewer {
     fn default() -> Self {
         Viewer {
@@ -149,6 +179,7 @@ impl Default for Viewer {
             max_scale: Some(100.0),
             scale_step: Some(0.05),
             filter_method: Some(FilterMethod::default()),
+            content_fit: Some(ContentFit::default()),
         }
     }
 }
@@ -156,12 +187,16 @@ impl Default for Viewer {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Keybindings {
     pub quit: Option<String>,
+    pub rotate_left: Option<String>,
+    pub rotate_right: Option<String>,
 }
 
 impl Default for Keybindings {
     fn default() -> Self {
         Keybindings {
             quit: Some("q".to_string()),
+            rotate_left: Some("[".to_string()),
+            rotate_right: Some("]".to_string()),
         }
     }
 }

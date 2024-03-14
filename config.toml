@@ -1,13 +1,34 @@
+# window properties
 [ui]
+# do you want to window title?
 title = false
+# do you want to apply antialiasing to content?
+# freezes app on wayland (maybe just my machine)
 antialiasing = false
+# theme
+# possible values: https://docs.rs/iced/latest/iced/enum.Theme.html
 theme = "tokyo_night"
 
+# image viewer properties
 [viewer]
+# minimal zoom-out value
 min_scale = 0.0
-max_scale = 10.0
-scale_step = 0.05
-# filter_method = "linear"
+# maximal zoom-in value
+max_scale = 100.0
+# zoom step
+scale_step = 0.08
+# zoom interpolation/filtering method
+# possible values: https://docs.rs/iced/latest/iced/widget/shader/wgpu/enum.FilterMode.html
+filter_method = "linear"
+# image viewer mode
+# possible values: https://docs.rs/iced/latest/iced/enum.ContentFit.html
+content_fit = "none"
 
+# keyboard bindings
 [keybindings]
+# close the application
 quit = "q"
+# rotate image 90 degree left
+rotate_left = "["
+# rotate image 90 degree right
+rotate_right = "]"

@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-iced = { version = "0", features = ["debug", "image"] }
+# iced = { version = "0", features = ["debug", "image"] }
+iced = { path = "../iced", features = ["debug", "image"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0"
 image = "0"

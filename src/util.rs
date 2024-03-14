@@ -29,7 +29,7 @@ pub fn get_files(image_path: &PathBuf) -> Option<HashMap<usize, PathBuf>> {
     Some(files)
 }
 
-pub fn get_current_file_id(file: &PathBuf, files: &HashMap<usize, PathBuf>) -> Option<usize> {
+pub fn get_file_id(file: &PathBuf, files: &HashMap<usize, PathBuf>) -> Option<usize> {
     for (id, path) in files.iter() {
         if path.eq(file) {
             return Some(*id);
