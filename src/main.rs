@@ -1,6 +1,7 @@
 pub mod args;
 pub mod config;
 pub mod util;
+pub mod strings;
 
 use iced::{
     executor::Default as ExecutorDefault,
@@ -9,16 +10,21 @@ use iced::{
         key,
         Key,
     },
-    widget::image::{
-        FilterMethod,
-        Handle,
-        Image,
-        Viewer
+    widget::{
+        container,
+        image::{
+            FilterMethod,
+            Handle,
+            Image,
+            Viewer
+        },
+        row
     },
     window::{
         Position,
         Settings as WindowSettings
     },
+    Alignment,
     Application,
     Command,
     ContentFit,
@@ -44,10 +50,14 @@ use config::{
     Config,
     Keybindings,
 };
+use strings::{
+    messages,
+    keybindings,
+};
 
 fn main() -> Result {
     let mut args: Args = Args::parse();
-    args.img = fs::canonicalize(&args.img).expect("Couldn't get absolute path for input image");
+    args.img = fs::canonicalize(&args.img).expect(messages::ERR_NO_INPUT_FILE);
     if !util::is_file_supported(&args.img).unwrap_or_default() {
         std::process::exit(0);
     }
@@ -55,16 +65,14 @@ fn main() -> Result {
     let config = args.get_config().unwrap_or_default();
     let flags = Flags::new(args, config);
 
-    let ui_config = flags.config.ui.clone().unwrap_or_default();
-    let title_bar = ui_config.title.unwrap_or_default();
+    let window_config = flags.config.window.clone().unwrap_or_default();
     Imgvwr::run(Settings {
         window: WindowSettings {
-            // TODO: consider option, why not?
             position: Position::Centered,
-            decorations: title_bar,
+            decorations: window_config.title.unwrap_or_default(),
             ..WindowSettings::default()
         },
-        antialiasing: ui_config.antialiasing.clone().unwrap_or_default(),
+        antialiasing: window_config.antialiasing.clone().unwrap_or_default(),
         flags,
         ..Settings::default()
     })
@@ -81,6 +89,7 @@ struct Imgvwr {
     theme: Theme,
     filter_method: FilterMethod,
     content_fit: ContentFit,
+    rotation: f32,
 }
 
 impl Imgvwr {
@@ -119,7 +128,7 @@ impl Imgvwr {
         Handle::from_path(image_path)
     }
 
-    // TODO: is there no way to pass reference instead of cloning whole fucking image?
+    // TODO: removal depends on #2330 and #2334
     fn get_handle_from_pixels(&self) -> Handle {
         let image = self.image.clone();
 
@@ -128,17 +137,23 @@ impl Imgvwr {
 
     fn get_image(image_path: &PathBuf) -> DynamicImage {
         let image = Reader::open(image_path)
-            .expect("Failed to open image file")
+            .expect(messages::ERR_CANT_OPEN_IMAGE)
             .decode()
-            .expect("Failed to decode image file");
+            .expect(messages::ERR_CANT_DECODE_IMAGE);
 
         DynamicImage::ImageRgba8(image.into_rgba8())
     }
 
     fn rotate_image(&mut self, direction: Direction) {
         self.image = match direction {
-            Direction::Next => self.image.rotate90(),
-            Direction::Previous => self.image.rotate270(),
+            Direction::Next => { 
+                self.rotation += 90.0_f32.to_radians();
+                self.image.rotate90()
+            }
+            Direction::Previous => {
+                self.rotation -= 90.0_f32.to_radians();
+                self.image.rotate270()
+            }
         }
     }
 }
@@ -174,10 +189,10 @@ impl Application for Imgvwr {
     fn new(flags: Flags) -> (Self, Command<Message>) {
         let config = flags.config;
         let viewer = config.viewer.unwrap_or_default();
-        let ui = config.ui.unwrap_or_default();
+        let window = config.window.unwrap_or_default();
 
-        let images = util::get_files(&flags.args.img).expect("No files in input directory");
-        let image_id = util::get_file_id(&flags.args.img, &images).expect("Couldn't get input file id");
+        let images = util::get_files(&flags.args.img).expect(messages::ERR_NO_FILES_INPUT_DIR);
+        let image_id = util::get_file_id(&flags.args.img, &images).expect(messages::ERR_CANT_GET_FILE_ID);
         let image = Imgvwr::get_image(&flags.args.img);
 
         (
@@ -189,9 +204,10 @@ impl Application for Imgvwr {
                 max_scale: viewer.max_scale.unwrap(),
                 scale: viewer.scale_step.unwrap(),
                 keybindings: config.keybindings.unwrap_or_default(),
-                theme: Theme::from(ui.theme.unwrap_or_default()),
+                theme: Theme::from(window.theme.unwrap_or_default()),
                 filter_method: FilterMethod::from(viewer.filter_method.unwrap_or_default()),
                 content_fit: ContentFit::from(viewer.content_fit.unwrap_or_default()),
+                rotation: 0.0,
             },
             Command::none()
         )
@@ -199,7 +215,8 @@ impl Application for Imgvwr {
 
     fn title(&self) -> String {
         let filename = self.get_image_path().and_then(|f| f.file_name()).unwrap().to_str().unwrap();
-        format!("imgvwr | {filename}")
+        let app_name = strings::APPLICATION_NAME;
+        format!("{app_name} | {filename}")
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -209,11 +226,9 @@ impl Application for Imgvwr {
             },
             Message::Move(direction) => {
                 self.switch_image(direction);
-                self.view();
             },
             Message::Rotate(direction) => {
                 self.rotate_image(direction);
-                self.view();
             }
         }
         Command::none()
@@ -221,9 +236,9 @@ impl Application for Imgvwr {
 
     fn view(&self) -> Element<Message> {
         // let handle = self.get_handle_from_path();
-        let handle = self.get_handle_from_pixels();
+        let handle_2 = self.get_handle_from_pixels();
 
-        let viewer = Viewer::new(handle)
+        let viewer = Viewer::new(handle_2)
             .scale_step(self.scale)
             .min_scale(self.min_scale)
             .max_scale(self.max_scale)
@@ -232,6 +247,24 @@ impl Application for Imgvwr {
             .width(Length::Fill)
             .height(Length::Fill);
 
+        // let image = Image::new(handle)
+        //     .content_fit(self.content_fit)
+        //     .filter_method(self.filter_method)
+        //     .width(Length::Fill)
+        //     .height(Length::Fill)
+        //     .rotation(self.rotation);
+
+        // let content = row![viewer, image]
+        //     .width(Length::Fill)
+        //     .height(Length::Fill)
+        //     .align_items(Alignment::Center);
+
+        // container(content)
+        //     .width(Length::Fill)
+        //     .height(Length::Fill)
+        //     .center_x()
+        //     .center_y()
+        //     .into()
         viewer.into()
     }
 
@@ -243,13 +276,13 @@ impl Application for Imgvwr {
         // TODO: pass keybindings to fn pointer somehow
         keyboard::on_key_press(|key, _modifiers,| {
             match key.as_ref() {
-                Key::Character("q") => {
+                Key::Character(keybindings::QUIT) => {
                     Some(Message::Quit)
                 },
-                Key::Character("[") => {
+                Key::Character(keybindings::ROTATE_LEFT) => {
                     Some(Message::Rotate(Direction::Previous))
                 },
-                Key::Character("]") => {
+                Key::Character(keybindings::ROTATE_RIGHT) => {
                     Some(Message::Rotate(Direction::Next))
                 },
                 Key::Named(key) => {
