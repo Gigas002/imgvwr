@@ -8,10 +8,11 @@ use std::{
     io::Read,
     path::PathBuf,
 };
+use crate::strings::keybindings;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    pub ui: Option<UI>,
+    pub window: Option<Window>,
     pub viewer: Option<Viewer>,
     pub keybindings: Option<Keybindings>,
 }
@@ -19,7 +20,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            ui: Some(UI::default()),
+            window: Some(Window::default()),
             viewer: Some(Viewer::default()),
             keybindings: Some(Keybindings::default()),
         }
@@ -37,15 +38,15 @@ impl Config {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UI {
+pub struct Window {
     pub title: Option<bool>,
     pub antialiasing: Option<bool>,
     pub theme: Option<Theme>,
 }
 
-impl Default for UI {
+impl Default for Window {
     fn default() -> Self {
-        UI {
+        Window {
             title: Some(false),
             antialiasing: Some(true),
             theme: Some(Theme::default()),
@@ -177,7 +178,7 @@ impl Default for Viewer {
         Viewer {
             min_scale: Some(0.0),
             max_scale: Some(100.0),
-            scale_step: Some(0.05),
+            scale_step: Some(0.08),
             filter_method: Some(FilterMethod::default()),
             content_fit: Some(ContentFit::default()),
         }
@@ -194,9 +195,9 @@ pub struct Keybindings {
 impl Default for Keybindings {
     fn default() -> Self {
         Keybindings {
-            quit: Some("q".to_string()),
-            rotate_left: Some("[".to_string()),
-            rotate_right: Some("]".to_string()),
+            quit: Some(keybindings::QUIT.to_string()),
+            rotate_left: Some(keybindings::ROTATE_LEFT.to_string()),
+            rotate_right: Some(keybindings::ROTATE_RIGHT.to_string()),
         }
     }
 }

@@ -1,5 +1,5 @@
 # window properties
-[ui]
+[window]
 # do you want to window title?
 title = false
 # do you want to apply antialiasing to content?

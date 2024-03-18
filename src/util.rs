@@ -1,15 +1,15 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf
+};
 use std::collections::HashMap;
-
-pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "png", "jpg",
-];
+use crate::strings;
 
 pub fn is_file_supported(file_path: &PathBuf) -> Option<bool> {
     if file_path.is_file() && file_path.exists() {
         let extension = file_path.extension()?.to_str()?;
 
-        return Some(SUPPORTED_EXTENSIONS.contains(&extension));
+        return Some(strings::SUPPORTED_EXTENSIONS.contains(&extension));
     }
 
     None

@@ -21,8 +21,11 @@ See `config.toml` for possible values and explanation
 
 ## TODO
 
-- set filter_method for view (iced 0.13.0+)
-- don't resize image on window resize (see comments in `view`)  -> working on draft pr for this
+- set filter_method for view -> #2324
+- don't resize image on window resize (see comments in `view`) -> #2330
+- perf improvements for image loading, especially on resizing -> #2334
 - handle keybindings
-- check if strings can be separated from source to resources or something like that
-- rename `ui` to `window` in `config`
+- basic docs
+- [repo] ci/cd
+- [repo] dependabot
+
