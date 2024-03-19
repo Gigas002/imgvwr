@@ -4,6 +4,7 @@ pub mod util;
 pub mod strings;
 
 use iced::{
+    advanced::Application,
     executor::Default as ExecutorDefault,
     keyboard::{
         self,
@@ -15,8 +16,7 @@ use iced::{
         image::{
             FilterMethod,
             Handle,
-            Image,
-            Viewer
+            Image
         },
         row
     },
@@ -25,7 +25,7 @@ use iced::{
         Settings as WindowSettings
     },
     Alignment,
-    Application,
+    // Application,
     Command,
     ContentFit,
     Element,
@@ -36,7 +36,6 @@ use iced::{
     Theme,
 };
 use std::{
-    collections::HashMap,
     fs,
     path::PathBuf,
 };
@@ -50,10 +49,7 @@ use config::{
     Config,
     Keybindings,
 };
-use strings::{
-    messages,
-    keybindings,
-};
+use strings::messages;
 
 fn main() -> Result {
     let mut args: Args = Args::parse();
@@ -66,6 +62,7 @@ fn main() -> Result {
     let flags = Flags::new(args, config);
 
     let window_config = flags.config.window.clone().unwrap_or_default();
+    // TODO: use iced::run or iced::program() instead of implementing Application trait?
     Imgvwr::run(Settings {
         window: WindowSettings {
             position: Position::Centered,
@@ -81,7 +78,7 @@ fn main() -> Result {
 struct Imgvwr {
     image: DynamicImage,
     image_id: usize,
-    images: HashMap<usize, PathBuf>,
+    images: Vec<PathBuf>,
     min_scale: f32,
     max_scale: f32,
     scale: f32,
@@ -95,44 +92,26 @@ struct Imgvwr {
 impl Imgvwr {
     fn switch_image(&mut self, direction: Direction) {
         let current_id = &self.image_id;
-        let min_id = self.images.keys().min().unwrap();
-        let max_id = self.images.keys().max().unwrap();
+        let max_id = self.images.len().checked_sub(1).unwrap();
 
         let image_id = match direction {
             Direction::Next => {
                 match current_id + 1 {
-                    next_id if next_id > *max_id => *min_id,
+                    next_id if next_id > max_id => 0,
                     next_id => next_id,
                 }
             },
             Direction::Previous => {
                 match current_id.checked_sub(1) {
                     Some(prev_id) => prev_id,
-                    None => *max_id,
+                    None => max_id,
                 }
             }
         };
 
+        let image_path = self.images.get(image_id).unwrap();
         self.image_id = image_id;
-        let image_path = self.get_image_path().unwrap();
         self.image = Imgvwr::get_image(image_path)
-    }
-
-    fn get_image_path(&self) -> Option<&PathBuf> {
-        self.images.get(&self.image_id)
-    }
-
-    fn get_handle_from_path(&self) -> Handle {
-        let image_path = self.get_image_path().unwrap();
-
-        Handle::from_path(image_path)
-    }
-
-    // TODO: removal depends on #2330 and #2334
-    fn get_handle_from_pixels(&self) -> Handle {
-        let image = self.image.clone();
-
-        Handle::from_pixels(image.width(), image.height(), image.into_bytes())
     }
 
     fn get_image(image_path: &PathBuf) -> DynamicImage {
@@ -160,9 +139,8 @@ impl Imgvwr {
 
 #[derive(Clone, Debug)]
 enum Message {
-    Quit,
     Move(Direction),
-    Rotate(Direction),
+    KeyPressed(String),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -214,58 +192,69 @@ impl Application for Imgvwr {
     }
 
     fn title(&self) -> String {
-        let filename = self.get_image_path().and_then(|f| f.file_name()).unwrap().to_str().unwrap();
+        let filename = self.images.get(self.image_id).and_then(|f| f.file_name()).unwrap().to_str().unwrap();
         let app_name = strings::APPLICATION_NAME;
         format!("{app_name} | {filename}")
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
+        let keybindings = self.keybindings.clone();
         match message {
-            Message::Quit => {
-                std::process::exit(0);
-            },
+            Message::KeyPressed(key) => {
+                match key {
+                    _ if key == keybindings.quit.unwrap() => std::process::exit(0),
+                    _ if key == keybindings.rotate_left.unwrap() => self.rotate_image(Direction::Previous),
+                    _ if key == keybindings.rotate_right.unwrap() => self.rotate_image(Direction::Next),
+                    _ => {}
+                }
+            }
             Message::Move(direction) => {
                 self.switch_image(direction);
             },
-            Message::Rotate(direction) => {
-                self.rotate_image(direction);
-            }
         }
         Command::none()
     }
 
     fn view(&self) -> Element<Message> {
-        // let handle = self.get_handle_from_path();
-        let handle_2 = self.get_handle_from_pixels();
+        // TODO: removal depends on #2330 and #2334
+        let image = self.image.clone();
+        let handle = Handle::from_pixels(image.width(), image.height(), image.into_bytes());
 
-        let viewer = Viewer::new(handle_2)
-            .scale_step(self.scale)
-            .min_scale(self.min_scale)
-            .max_scale(self.max_scale)
+        let image_path = self.images.get(self.image_id).unwrap();
+        let handle_2 = Handle::from_path(&image_path);
+
+        let viewer = Image::new(handle)
+            // .scale_step(self.scale)
+            // .min_scale(self.min_scale)
+            // .max_scale(self.max_scale)
             .content_fit(self.content_fit)
             .filter_method(self.filter_method)
             .width(Length::Fill)
             .height(Length::Fill);
 
-        // let image = Image::new(handle)
-        //     .content_fit(self.content_fit)
-        //     .filter_method(self.filter_method)
-        //     .width(Length::Fill)
-        //     .height(Length::Fill)
-        //     .rotation(self.rotation);
+        let image = Image::new(handle_2)
+            // .scale_step(self.scale)
+            // .min_scale(self.min_scale)
+            // .max_scale(self.max_scale)
+            .content_fit(self.content_fit)
+            .filter_method(self.filter_method)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .rotation(self.rotation);
 
-        // let content = row![viewer, image]
-        //     .width(Length::Fill)
-        //     .height(Length::Fill)
-        //     .align_items(Alignment::Center);
+        let content = row![viewer, image]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_items(Alignment::Center);
 
-        // container(content)
-        //     .width(Length::Fill)
-        //     .height(Length::Fill)
-        //     .center_x()
-        //     .center_y()
-        //     .into()
-        viewer.into()
+        let container = container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x()
+            .center_y();
+
+        container.into()
+        // viewer.into()
     }
 
     fn theme(&self) -> Theme {
@@ -273,27 +262,18 @@ impl Application for Imgvwr {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        // TODO: pass keybindings to fn pointer somehow
         keyboard::on_key_press(|key, _modifiers,| {
             match key.as_ref() {
-                Key::Character(keybindings::QUIT) => {
-                    Some(Message::Quit)
-                },
-                Key::Character(keybindings::ROTATE_LEFT) => {
-                    Some(Message::Rotate(Direction::Previous))
-                },
-                Key::Character(keybindings::ROTATE_RIGHT) => {
-                    Some(Message::Rotate(Direction::Next))
-                },
+                Key::Character(c) => Some(Message::KeyPressed(c.to_string())),
                 Key::Named(key) => {
                     let direction = match key {
                         key::Named::ArrowLeft => Some(Direction::Previous),
                         key::Named::ArrowRight => Some(Direction::Next),
-                        _ => None,
+                        _ => None
                     };
 
                     direction.map(Message::Move)
-                }
+                },
                 _ => None,
             }
         })
