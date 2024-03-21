@@ -31,7 +31,7 @@ impl Config {
     pub fn load(path: &PathBuf) -> Option<Config> {
         let mut config_file = File::open(path).ok()?;
         let mut config_str = String::new();
-        let _ = config_file.read_to_string(&mut config_str);
+        config_file.read_to_string(&mut config_str).ok()?;
 
         toml::from_str(&mut config_str).ok()?
     }
@@ -39,7 +39,7 @@ impl Config {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Window {
-    pub title: Option<bool>,
+    pub decorations: Option<bool>,
     pub antialiasing: Option<bool>,
     pub theme: Option<Theme>,
 }
@@ -47,7 +47,7 @@ pub struct Window {
 impl Default for Window {
     fn default() -> Self {
         Window {
-            title: Some(false),
+            decorations: Some(true),
             antialiasing: Some(true),
             theme: Some(Theme::default()),
         }
@@ -123,6 +123,18 @@ pub struct Viewer {
     pub content_fit: Option<ContentFit>,
 }
 
+impl Default for Viewer {
+    fn default() -> Self {
+        Viewer {
+            min_scale: Some(0.0),
+            max_scale: Some(100.0),
+            scale_step: Some(0.08),
+            filter_method: Some(FilterMethod::default()),
+            content_fit: Some(ContentFit::default()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterMethod {
@@ -170,18 +182,6 @@ impl From<ContentFit> for iced::ContentFit {
 impl Default for ContentFit {
     fn default() -> Self {
         ContentFit::None
-    }
-}
-
-impl Default for Viewer {
-    fn default() -> Self {
-        Viewer {
-            min_scale: Some(0.0),
-            max_scale: Some(100.0),
-            scale_step: Some(0.08),
-            filter_method: Some(FilterMethod::default()),
-            content_fit: Some(ContentFit::default()),
-        }
     }
 }
 

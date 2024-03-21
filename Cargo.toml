@@ -1,12 +1,22 @@
 [package]
 name = "imgvwr"
 version = "0.1.0"
+authors = ["gigas002", "gigas002 <gigas002@pm.me>"]
 edition = "2021"
+description = "Minimalistic, dead-simple image viewer with only function to view images"
+repository = "https://github.com/Gigas002/imgvwr"
+license = "AGPL-3.0-only"
+keywords = ["imgvwr", "iced", "image", "viewer"]
+categories = ["multimedia::images", "graphics"]
+exclude = [".vscode/", ".gitignore", "*.jpg"]
+
+[lints.rust]
+unsafe_code = "forbid"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 # iced = { version = "0", features = ["debug", "image"] }
-iced = { path = "../iced", features = ["debug", "image", "advanced"] }
+iced = { path = "../iced", features = ["debug", "image"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0"
 image = "0"

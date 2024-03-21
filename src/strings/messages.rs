@@ -5,3 +5,4 @@ pub const ERR_CANT_OPEN_IMAGE: &str = "Couldn't open image file";
 pub const ERR_CANT_DECODE_IMAGE: &str = "Couldn't decode image file";
 pub const ERR_NO_FILES_INPUT_DIR: &str = "Couldn't find any files in input directory";
 pub const ERR_CANT_GET_FILE_ID: &str = "Couldn't get input file id";
+pub const ERR_INPUT_FILE_NOT_SUPPORTED: &str = "Selected input file is not supported";

@@ -1,7 +1,7 @@
 # window properties
 [window]
-# do you want to window title?
-title = true
+# do you want to see window title?
+decorations = true
 # do you want to apply antialiasing to content?
 # freezes app on wayland (maybe just my machine)
 antialiasing = false

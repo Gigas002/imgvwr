@@ -21,7 +21,7 @@ pub struct Args {
 
 impl Args {
     pub fn get_config(&self) -> Option<Config> {
-        let mut config_path = self.config.clone().unwrap_or_else(|| {
+        let mut config_path = self.config.to_owned().unwrap_or_else(|| {
             let dotconfig = dirs::config_local_dir().expect(messages::ERR_NO_DOTCONFIG);
 
             dotconfig.join(strings::APPLICATION_NAME).join(strings::CONFIG_FILENAME)
