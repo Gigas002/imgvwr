@@ -14,7 +14,7 @@ Features:
 Cons:
 
 - shows not all images (see `image` crate [features list](https://docs.rs/crate/image/latest/features))
-- shows not moving images (e.g. `gif`)
+- shows not moving images (e.g. `gif`) -> iced #1412
 
 Prefer using better software, e.g. [oculante](https://github.com/woelper/oculante) or [imv](https://sr.ht/~exec64/imv) if you want more features and proper support
 
@@ -44,6 +44,6 @@ As for common issues:
 
 - `FilterMethod` support for `Viewer` -> iced #2324
 - `ContentFit` support for `Viewer` -> iced #2330
-- rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2334
+- rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2334 + impl for `viewer` (merge #2330 and #2334 first)
 - [repo] ci/cd
 - [repo] dependabot

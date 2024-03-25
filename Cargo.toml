@@ -14,10 +14,12 @@ exclude = [".vscode/", ".gitignore", "*.jpg"]
 unsafe_code = "forbid"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+# clap = { version = "4", features = ["derive"] }
+clap = { version = "4", default-features = false, features = ["std", "derive"] }
 # iced = { version = "0", features = ["debug", "image"] }
-iced = { path = "../iced", features = ["debug", "image"] }
+# iced = { git = "https://github.com/iced-rs/iced", features = ["wgpu", "image"] }
+iced = { path = "../iced", default-features = false, features = ["wgpu", "image"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0"
-image = "0"
+toml =  { version = "0", default-features = false, features = ["parse"] }
+# image = "0"
 dirs = "5"

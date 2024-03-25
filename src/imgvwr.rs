@@ -6,18 +6,12 @@ use iced::{
             Key,
         },
     },
-    widget::{
-        container::Container,
-        image::{
-            FilterMethod,
-            Handle,
-            Image,
-            // Viewer,
-        },
-        row
+    widget::image::{
+        FilterMethod,
+        Handle,
+        Viewer,
     },
     window,
-    Alignment,
     Command,
     ContentFit,
     Element,
@@ -25,10 +19,6 @@ use iced::{
     Subscription,
 };
 use std::path::PathBuf;
-use image::{
-    io::Reader,
-    DynamicImage
-};
 use crate::{
     config::{
         self,
@@ -42,12 +32,11 @@ use crate::{
 };
 
 pub struct Imgvwr {
-    image: DynamicImage,
     image_id: usize,
     images: Vec<PathBuf>,
-    // min_scale: f32,
-    // max_scale: f32,
-    // scale: f32,
+    min_scale: f32,
+    max_scale: f32,
+    scale: f32,
     keybindings: Keybindings,
     filter_method: FilterMethod,
     content_fit: ContentFit,
@@ -74,31 +63,18 @@ impl Imgvwr {
             }
         };
 
-        let image_path = self.images.get(image_id).unwrap();
         self.image_id = image_id;
-        self.image = Imgvwr::get_image(image_path);
 
         Command::none()
     }
 
-    fn get_image(image_path: &PathBuf) -> DynamicImage {
-        let image = Reader::open(image_path)
-            .expect(messages::ERR_CANT_OPEN_IMAGE)
-            .decode()
-            .expect(messages::ERR_CANT_DECODE_IMAGE);
-
-        DynamicImage::ImageRgba8(image.into_rgba8())
-    }
-
     fn rotate_image(&mut self, rotation: &Rotation) -> Command<Message> {
-        self.image = match rotation {
+        match rotation {
             Rotation::Right => { 
                 self.rotation += 90.0_f32.to_radians();
-                self.image.rotate90()
             }
             Rotation::Left => {
                 self.rotation -= 90.0_f32.to_radians();
-                self.image.rotate270()
             }
         };
 
@@ -106,22 +82,20 @@ impl Imgvwr {
     }
 
     pub fn new(img: &PathBuf, viewer: &config::Viewer, keybindings: config::Keybindings) -> Self {
-        let image = Imgvwr::get_image(img);
         let images = util::get_files(img).expect(messages::ERR_NO_FILES_INPUT_DIR);
         let image_id = util::get_file_id(img, &images).expect(messages::ERR_CANT_GET_FILE_ID);
-        // let min_scale = viewer.min_scale.unwrap_or_default();
-        // let max_scale = viewer.max_scale.unwrap();
-        // let scale = viewer.scale_step.unwrap();
+        let min_scale = viewer.min_scale.unwrap_or_default();
+        let max_scale = viewer.max_scale.unwrap();
+        let scale = viewer.scale_step.unwrap();
         let filter_method = viewer.filter_method.to_owned().unwrap_or_default();
         let content_fit = viewer.content_fit.to_owned().unwrap_or_default();
 
         Imgvwr {
-            image,
             images,
             image_id,
-            // min_scale,
-            // max_scale,
-            // scale,
+            min_scale,
+            max_scale,
+            scale,
             keybindings,
             filter_method: FilterMethod::from(filter_method),
             content_fit: ContentFit::from(content_fit),
@@ -152,49 +126,21 @@ impl Imgvwr {
     }
 
     pub fn view(&self) -> Element<Message> {
-        // TODO: removal depends on #2334
-        // also leaks mem
-        let img = &self.image;
-        let width = img.width();
-        let height = img.height();
-        let bytes = img.as_bytes().to_owned();
-        let handle = Handle::from_pixels(width, height, bytes);
-
         let image_path = self.images.get(self.image_id).unwrap();
-        let handle_2 = Handle::from_path(image_path);
+        let handle = Handle::from_path(image_path);
 
-        let viewer = Image::new(handle)
-            // .scale_step(self.scale)
-            // .min_scale(self.min_scale)
-            // .max_scale(self.max_scale)
-            .content_fit(self.content_fit)
-            .filter_method(self.filter_method)
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        let image = Image::new(handle_2)
-            // .scale_step(self.scale)
-            // .min_scale(self.min_scale)
-            // .max_scale(self.max_scale)
+        let viewer = Viewer::new(handle)
+            .scale_step(self.scale)
+            .min_scale(self.min_scale)
+            .max_scale(self.max_scale)
             .content_fit(self.content_fit)
             .filter_method(self.filter_method)
             .width(Length::Fill)
             .height(Length::Fill)
-            .rotation(self.rotation);
+            .rotation(self.rotation)
+            .rotation_layout(iced::RotationLayout::Keep);
 
-        let content = row![viewer, image]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_items(Alignment::Center);
-
-        let container = Container::new(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x()
-            .center_y();
-
-        container.into()
-        // viewer.into()
+        viewer.into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
