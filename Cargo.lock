@@ -1227,6 +1227,7 @@ dependencies = [
  "iced_graphics",
  "log",
  "once_cell",
+ "thiserror",
  "wgpu",
 ]
 

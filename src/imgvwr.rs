@@ -9,7 +9,7 @@ use iced::{
     widget::image::{
         FilterMethod,
         Handle,
-        Viewer,
+                Viewer,
     },
     window,
     Command,
@@ -138,7 +138,7 @@ impl Imgvwr {
             .width(Length::Fill)
             .height(Length::Fill)
             .rotation(self.rotation)
-            .rotation_layout(iced::RotationLayout::Keep);
+            .rotation_layout(iced::RotationLayout::Change);
 
         viewer.into()
     }

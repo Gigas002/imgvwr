@@ -3,8 +3,7 @@
 # do you want to see window title?
 decorations = true
 # do you want to apply antialiasing to content?
-# freezes app on wayland (maybe just my machine)
-antialiasing = false
+antialiasing = true
 # theme
 # possible values: https://docs.rs/iced/latest/iced/enum.Theme.html
 theme = "tokyo_night"
@@ -22,7 +21,7 @@ scale_step = 0.08
 filter_method = "linear"
 # image viewer mode
 # possible values: https://docs.rs/iced/latest/iced/enum.ContentFit.html
-content_fit = "none"
+content_fit = "contain"
 
 # keyboard bindings
 [keybindings]
