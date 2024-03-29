@@ -1,21 +1,13 @@
-pub mod strings;
 pub mod args;
 pub mod config;
 pub mod imgvwr;
+pub mod strings;
 pub mod util;
 
-use iced::{
-    window::Settings as WindowSettings,
-    Settings,
-    Theme,
-};
-use std::fs;
+use crate::{args::Args, imgvwr::Imgvwr, strings::messages};
 use clap::Parser;
-use crate::{
-    args::Args,
-    imgvwr::Imgvwr,
-    strings::messages,
-};
+use iced::{window::Settings as WindowSettings, Settings, Theme};
+use std::fs;
 
 fn main() -> iced::Result {
     let mut args: Args = Args::parse();

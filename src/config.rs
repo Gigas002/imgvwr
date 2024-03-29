@@ -1,14 +1,7 @@
-use serde::{
-    Serialize,
-    Deserialize
-};
-use toml;
-use std::{
-    fs::File,
-    io::Read,
-    path::PathBuf,
-};
 use crate::strings::keybindings;
+use serde::{Deserialize, Serialize};
+use std::{fs::File, io::Read, path::PathBuf};
+use toml;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -139,7 +132,7 @@ impl Default for Viewer {
 #[serde(rename_all = "snake_case")]
 pub enum FilterMethod {
     Linear,
-    Nearest
+    Nearest,
 }
 
 impl From<FilterMethod> for iced::widget::image::FilterMethod {

@@ -1,8 +1,5 @@
-use std::{
-    fs,
-    path::PathBuf
-};
 use crate::strings;
+use std::{fs, path::PathBuf};
 
 pub fn is_file_supported(file_path: &PathBuf) -> Option<bool> {
     match file_path {
@@ -10,15 +7,16 @@ pub fn is_file_supported(file_path: &PathBuf) -> Option<bool> {
             let extension = file_path.extension()?.to_str()?;
 
             Some(strings::SUPPORTED_EXTENSIONS.contains(&extension))
-        },
-        _ => None
+        }
+        _ => None,
     }
 }
 
 pub fn get_files(image_path: &PathBuf) -> Option<Vec<PathBuf>> {
     let dir = image_path.parent()?;
 
-    let mut files: Vec<PathBuf> = fs::read_dir(dir).ok()?
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| is_file_supported(path).unwrap_or_default())

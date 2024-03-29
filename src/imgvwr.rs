@@ -1,35 +1,17 @@
+use crate::{
+    config::{self, Keybindings},
+    strings::{self, messages},
+    util,
+};
 use iced::{
     keyboard::{
         self,
-        key::{
-            Named,
-            Key,
-        },
+        key::{Key, Named},
     },
-    widget::image::{
-        FilterMethod,
-        Handle,
-                Viewer,
-    },
-    window,
-    Command,
-    ContentFit,
-    Element,
-    Length,
-    Subscription,
+    widget::image::{FilterMethod, Handle, Viewer},
+    window, Command, ContentFit, Element, Length, Subscription,
 };
 use std::path::PathBuf;
-use crate::{
-    config::{
-        self,
-        Keybindings
-    },
-    strings::{
-        self,
-        messages
-    },
-    util,
-};
 
 pub struct Imgvwr {
     image_id: usize,
@@ -49,18 +31,14 @@ impl Imgvwr {
         let max_id = self.images.len().checked_sub(1).unwrap();
 
         let image_id = match direction {
-            Direction::Next => {
-                match current_id + 1 {
-                    next_id if next_id > max_id => 0,
-                    next_id => next_id,
-                }
+            Direction::Next => match current_id + 1 {
+                next_id if next_id > max_id => 0,
+                next_id => next_id,
             },
-            Direction::Previous => {
-                match current_id.checked_sub(1) {
-                    Some(prev_id) => prev_id,
-                    None => max_id,
-                }
-            }
+            Direction::Previous => match current_id.checked_sub(1) {
+                Some(prev_id) => prev_id,
+                None => max_id,
+            },
         };
 
         self.image_id = image_id;
@@ -70,7 +48,7 @@ impl Imgvwr {
 
     fn rotate_image(&mut self, rotation: &Rotation) -> Command<Message> {
         match rotation {
-            Rotation::Right => { 
+            Rotation::Right => {
                 self.rotation += 90.0_f32.to_radians();
             }
             Rotation::Left => {
@@ -104,24 +82,32 @@ impl Imgvwr {
     }
 
     pub fn title(&self) -> String {
-        let filename = self.images.get(self.image_id).and_then(|f| f.file_name()).unwrap().to_str().unwrap();
+        let filename = self
+            .images
+            .get(self.image_id)
+            .and_then(|f| f.file_name())
+            .unwrap()
+            .to_str()
+            .unwrap();
         let app_name = strings::APPLICATION_NAME;
         format!("{app_name} | {filename}")
     }
 
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::KeyPressed(key) => {
-                match key {
-                    _ if key.eq(self.keybindings.quit.as_ref().unwrap()) => window::close(window::Id::MAIN),
-                    _ if key.eq(self.keybindings.rotate_left.as_ref().unwrap()) => self.rotate_image(&Rotation::Left),
-                    _ if key.eq(self.keybindings.rotate_right.as_ref().unwrap()) => self.rotate_image(&Rotation::Right),
-                    _ => Command::none(),
+            Message::KeyPressed(key) => match key {
+                _ if key.eq(self.keybindings.quit.as_ref().unwrap()) => {
+                    window::close(window::Id::MAIN)
                 }
-            }
-            Message::Move(direction) => {
-                self.switch_image(&direction)
+                _ if key.eq(self.keybindings.rotate_left.as_ref().unwrap()) => {
+                    self.rotate_image(&Rotation::Left)
+                }
+                _ if key.eq(self.keybindings.rotate_right.as_ref().unwrap()) => {
+                    self.rotate_image(&Rotation::Right)
+                }
+                _ => Command::none(),
             },
+            Message::Move(direction) => self.switch_image(&direction),
         }
     }
 
@@ -144,20 +130,18 @@ impl Imgvwr {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        keyboard::on_key_press(|key, _modifiers,| {
-            match key.as_ref() {
-                Key::Character(c) => Some(Message::KeyPressed(c.to_string())),
-                Key::Named(key) => {
-                    let direction = match key {
-                        Named::ArrowLeft => Some(Direction::Previous),
-                        Named::ArrowRight => Some(Direction::Next),
-                        _ => None
-                    };
+        keyboard::on_key_press(|key, _modifiers| match key.as_ref() {
+            Key::Character(c) => Some(Message::KeyPressed(c.to_string())),
+            Key::Named(key) => {
+                let direction = match key {
+                    Named::ArrowLeft => Some(Direction::Previous),
+                    Named::ArrowRight => Some(Direction::Next),
+                    _ => None,
+                };
 
-                    direction.map(Message::Move)
-                },
-                _ => None,
+                direction.map(Message::Move)
             }
+            _ => None,
         })
     }
 }
