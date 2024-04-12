@@ -1,6 +1,6 @@
-use crate::strings::keybindings;
+use crate::strings::{self, keybindings, messages};
 use serde::{Deserialize, Serialize};
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{error::Error, fs::File, io::Read, path::PathBuf};
 use toml;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,12 +21,21 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load(path: &PathBuf) -> Option<Config> {
-        let mut config_file = File::open(path).ok()?;
+    pub fn load(path: &PathBuf) -> Result<Config, Box<dyn Error>> {
+        let mut config_file = File::open(path)?;
         let mut config_str = String::new();
-        config_file.read_to_string(&mut config_str).ok()?;
+        config_file.read_to_string(&mut config_str)?;
 
-        toml::from_str(&mut config_str).ok()?
+        toml::from_str(&config_str).map_err(|err| err.into())
+    }
+
+    pub fn get_default_path() -> Result<PathBuf, Box<dyn Error>> {
+        dirs::config_local_dir()
+            .ok_or_else(|| messages::ERR_NO_DOTCONFIG.into())
+            .map(|path| {
+                path.join(strings::APPLICATION_NAME)
+                    .join(strings::CONFIG_FILENAME)
+            })
     }
 }
 

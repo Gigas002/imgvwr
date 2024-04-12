@@ -1,31 +1,10 @@
-use crate::{
-    config::Config,
-    strings::{self, messages},
-};
 use clap::Parser;
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Parser, Default)]
 pub struct Args {
     #[arg(short, long)]
     pub img: PathBuf,
     #[arg(short, long)]
-    config: Option<PathBuf>,
-}
-
-impl Args {
-    pub fn get_config(&self) -> Option<Config> {
-        let mut config_path = self.config.to_owned().unwrap_or_else(|| {
-            let dotconfig = dirs::config_local_dir().expect(messages::ERR_NO_DOTCONFIG);
-
-            dotconfig
-                .join(strings::APPLICATION_NAME)
-                .join(strings::CONFIG_FILENAME)
-        });
-        config_path.exists().then(|| {
-            config_path = fs::canonicalize(&config_path).expect(messages::ERR_NO_ABS_PATH_CONFIG);
-
-            Config::load(&config_path).unwrap_or_default()
-        })
-    }
+    pub config: Option<PathBuf>,
 }

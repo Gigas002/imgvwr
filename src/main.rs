@@ -4,7 +4,7 @@ pub mod imgvwr;
 pub mod strings;
 pub mod util;
 
-use crate::{args::Args, imgvwr::Imgvwr, strings::messages};
+use crate::{args::Args, config::Config, imgvwr::Imgvwr, strings::messages};
 use clap::Parser;
 use iced::{window::Settings as WindowSettings, Settings, Theme};
 use std::fs;
@@ -17,7 +17,10 @@ fn main() -> iced::Result {
         panic!("{err}")
     }
 
-    let config = args.get_config().unwrap_or_default();
+    let config_path = args
+        .config
+        .unwrap_or(Config::get_default_path().unwrap_or_default());
+    let config = Config::load(&config_path).unwrap_or_default();
     let window = config.window.unwrap_or_default();
     let viewer = config.viewer.unwrap_or_default();
     let keybindings = config.keybindings.unwrap_or_default();
