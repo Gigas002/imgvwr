@@ -56,10 +56,11 @@ impl Default for Window {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
     Light,
+    #[default]
     Dark,
     Dracula,
     Nord,
@@ -80,12 +81,6 @@ pub enum Theme {
     Moonfly,
     Nightfly,
     Oxocarbon,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
-    }
 }
 
 impl From<Theme> for iced::Theme {
@@ -137,9 +132,10 @@ impl Default for Viewer {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterMethod {
+    #[default]
     Linear,
     Nearest,
 }
@@ -153,18 +149,13 @@ impl From<FilterMethod> for iced::widget::image::FilterMethod {
     }
 }
 
-impl Default for FilterMethod {
-    fn default() -> Self {
-        FilterMethod::Linear
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentFit {
     Contain,
     Cover,
     Fill,
+    #[default]
     None,
     ScaleDown,
 }
@@ -178,12 +169,6 @@ impl From<ContentFit> for iced::ContentFit {
             ContentFit::None => iced::ContentFit::None,
             ContentFit::ScaleDown => iced::ContentFit::ScaleDown,
         }
-    }
-}
-
-impl Default for ContentFit {
-    fn default() -> Self {
-        ContentFit::None
     }
 }
 

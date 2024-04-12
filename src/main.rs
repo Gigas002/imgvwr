@@ -14,7 +14,7 @@ fn main() -> iced::Result {
     args.img = fs::canonicalize(&args.img).expect(messages::ERR_NO_INPUT_FILE);
     if !util::is_file_supported(&args.img).unwrap_or_default() {
         let err = messages::ERR_INPUT_FILE_NOT_SUPPORTED;
-        panic!("{err}")
+        return Err(iced::Error::WindowCreationFailed(err.into()));
     }
 
     let config_path = args

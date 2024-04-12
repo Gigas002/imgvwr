@@ -1,5 +1,8 @@
 use crate::strings;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub fn is_file_supported(file_path: &PathBuf) -> Option<bool> {
     match file_path {
@@ -12,7 +15,7 @@ pub fn is_file_supported(file_path: &PathBuf) -> Option<bool> {
     }
 }
 
-pub fn get_files(image_path: &PathBuf) -> Option<Vec<PathBuf>> {
+pub fn get_files(image_path: &Path) -> Option<Vec<PathBuf>> {
     let dir = image_path.parent()?;
 
     let mut files: Vec<PathBuf> = fs::read_dir(dir)
@@ -26,6 +29,6 @@ pub fn get_files(image_path: &PathBuf) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-pub fn get_file_id(file: &PathBuf, files: &Vec<PathBuf>) -> Option<usize> {
+pub fn get_file_id(file: &PathBuf, files: &[PathBuf]) -> Option<usize> {
     files.iter().position(|path| path.eq(file))
 }
