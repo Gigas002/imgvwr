@@ -9,7 +9,7 @@ use iced::{
         key::{Key, Named},
     },
     widget::image::{FilterMethod, Handle, Viewer},
-    window, Command, ContentFit, Element, Length, Subscription,
+    window, ContentFit, Element, Length, Subscription, Task,
 };
 use std::path::PathBuf;
 
@@ -26,7 +26,7 @@ pub struct Imgvwr {
 }
 
 impl Imgvwr {
-    fn switch_image(&mut self, direction: &Direction) -> Command<Message> {
+    fn switch_image(&mut self, direction: &Direction) -> Task<Message> {
         let current_id = &self.image_id;
         let max_id = self.images.len().checked_sub(1).unwrap();
 
@@ -43,10 +43,10 @@ impl Imgvwr {
 
         self.image_id = image_id;
 
-        Command::none()
+        Task::none()
     }
 
-    fn rotate_image(&mut self, rotation: &Rotation) -> Command<Message> {
+    fn rotate_image(&mut self, rotation: &Rotation) -> Task<Message> {
         match rotation {
             Rotation::Right => {
                 self.rotation += 90.0_f32.to_radians();
@@ -56,7 +56,7 @@ impl Imgvwr {
             }
         };
 
-        Command::none()
+        Task::none()
     }
 
     pub fn new(img: &PathBuf, viewer: &config::Viewer, keybindings: config::Keybindings) -> Self {
@@ -93,7 +93,7 @@ impl Imgvwr {
         format!("{app_name} | {filename}")
     }
 
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::KeyPressed(key) => match key {
                 _ if key.eq(self.keybindings.quit.as_ref().unwrap()) => {
@@ -105,7 +105,7 @@ impl Imgvwr {
                 _ if key.eq(self.keybindings.rotate_right.as_ref().unwrap()) => {
                     self.rotate_image(&Rotation::Right)
                 }
-                _ => Command::none(),
+                _ => Task::none(),
             },
             Message::Move(direction) => self.switch_image(&direction),
         }
@@ -123,8 +123,7 @@ impl Imgvwr {
             .filter_method(self.filter_method)
             .width(Length::Fill)
             .height(Length::Fill)
-            .rotation(self.rotation)
-            .rotation_layout(iced::RotationLayout::Change);
+            .rotation(self.rotation);
 
         viewer.into()
     }
