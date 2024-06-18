@@ -2,7 +2,7 @@
 
 Minimalistic, dead-simple image viewer with only function to view images, which follows unix philosophy
 
-Powered by [iced](https://github.com/iced-rs/iced)
+Powered by [iced](https://github.com/iced-rs/iced). You can actually think of this as an iced's `viewer` widget with config and very minor additions
 
 Features:
 
@@ -29,7 +29,7 @@ Because there's some stuff I don't like, of course. Personally I'd recommend to 
 
 Of course there are more tools for this purpose here and there, but I didn't like those for a different reasons, so didn't use them for quite enough time to remember
 
-For me, the motivation was is that I wanted an `oculante`, which would be faster to compile, without features I don't need and with simple code base, so I can fix it right away or file a pr/issue in appropriate place. That's it. It handles formats I need, it handles wayland natively, it's performance is not bad and it has config file with all the options that I use. It will *probably* even work on [RedoxOS](https://github.com/woelper/oculante) without changes to a code base!
+For me, the motivation was is that I wanted an `oculante`, which would be faster to compile, without features I don't need and with simple code base, so I can fix it right away or file a pr/issue in appropriate place. That's it. It handles formats I need, it handles wayland natively, it's performance is not bad and it has config file with all the options that I use. It will *probably* even work on [RedoxOS](https://gitlab.redox-os.org/redox-os/redox/) without changes to a code base!
 
 ## Usage
 
@@ -55,9 +55,9 @@ As for common issues:
 
 ## TODO
 
-- `FilterMethod` support for `Viewer` -> iced #2324
-- `ContentFit` support for `Viewer` -> iced #2330
-- rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2334 + impl for `viewer` (merge #2330 and #2334 first)
-- moar perf improvements -> iced #2382
-- [repo] ci/cd
-- [repo] dependabot
+- [x] `FilterMethod` support for `Viewer` -> iced #2324
+- [x] `ContentFit` support for `Viewer` -> iced #2330
+- [ ] *in progress* rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2467
+- [x] moar perf improvements -> iced #2382
+- [ ] [repo] ci/cd
+- [ ] [repo] dependabot
