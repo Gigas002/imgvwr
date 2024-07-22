@@ -6,7 +6,7 @@ pub mod util;
 
 use crate::{args::Args, config::Config, imgvwr::Imgvwr, strings::messages};
 use clap::Parser;
-use iced::{window::Settings as WindowSettings, Settings, Theme};
+use iced::{window::Settings, Theme};
 use std::fs;
 
 fn main() -> iced::Result {
@@ -29,12 +29,9 @@ fn main() -> iced::Result {
     let antialiasing = window.antialiasing.unwrap_or_default();
     let theme = window.theme.unwrap_or_default();
 
-    iced::program(Imgvwr::title, Imgvwr::update, Imgvwr::view)
-        .settings(Settings {
-            window: WindowSettings {
-                decorations,
-                ..WindowSettings::default()
-            },
+    iced::application(Imgvwr::title, Imgvwr::update, Imgvwr::view)
+        .window(Settings {
+            decorations,
             ..Settings::default()
         })
         .subscription(Imgvwr::subscription)
