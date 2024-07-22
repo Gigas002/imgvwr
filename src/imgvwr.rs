@@ -59,7 +59,11 @@ impl Imgvwr {
         Task::none()
     }
 
-    pub fn new(img: &PathBuf, viewer: &config::Viewer, keybindings: config::Keybindings) -> Self {
+    pub fn new(
+        img: &PathBuf,
+        viewer: &config::Viewer,
+        keybindings: config::Keybindings,
+    ) -> (Self, Task<Message>) {
         let images = util::get_files(img).expect(messages::ERR_NO_FILES_INPUT_DIR);
         let image_id = util::get_file_id(img, &images).expect(messages::ERR_CANT_GET_FILE_ID);
         let min_scale = viewer.min_scale.unwrap_or_default();
@@ -68,17 +72,20 @@ impl Imgvwr {
         let filter_method = viewer.filter_method.to_owned().unwrap_or_default();
         let content_fit = viewer.content_fit.to_owned().unwrap_or_default();
 
-        Imgvwr {
-            images,
-            image_id,
-            min_scale,
-            max_scale,
-            scale,
-            keybindings,
-            filter_method: FilterMethod::from(filter_method),
-            content_fit: ContentFit::from(content_fit),
-            rotation: 0.0,
-        }
+        (
+            Imgvwr {
+                images,
+                image_id,
+                min_scale,
+                max_scale,
+                scale,
+                keybindings,
+                filter_method: FilterMethod::from(filter_method),
+                content_fit: ContentFit::from(content_fit),
+                rotation: 0.0,
+            },
+            Task::none(),
+        )
     }
 
     pub fn title(&self) -> String {
@@ -97,7 +104,7 @@ impl Imgvwr {
         match message {
             Message::KeyPressed(key) => match key {
                 _ if key.eq(self.keybindings.quit.as_ref().unwrap()) => {
-                    window::close(window::Id::MAIN)
+                    window::get_latest().and_then(window::close)
                 }
                 _ if key.eq(self.keybindings.rotate_left.as_ref().unwrap()) => {
                     self.rotate_image(&Rotation::Left)
@@ -122,8 +129,8 @@ impl Imgvwr {
             .content_fit(self.content_fit)
             .filter_method(self.filter_method)
             .width(Length::Fill)
-            .height(Length::Fill)
-            .rotation(self.rotation);
+            .height(Length::Fill);
+        // .rotation(self.rotation);
 
         viewer.into()
     }
