@@ -129,8 +129,8 @@ impl Imgvwr {
             .content_fit(self.content_fit)
             .filter_method(self.filter_method)
             .width(Length::Fill)
-            .height(Length::Fill);
-        // .rotation(self.rotation);
+            .height(Length::Fill)
+            .rotation(self.rotation);
 
         viewer.into()
     }

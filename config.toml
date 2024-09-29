@@ -21,7 +21,7 @@ scale_step = 0.08
 filter_method = "linear"
 # image viewer mode
 # possible values: https://docs.rs/iced/latest/iced/enum.ContentFit.html
-content_fit = "contain"
+content_fit = "none"
 
 # keyboard bindings
 [keybindings]
