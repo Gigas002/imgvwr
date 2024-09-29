@@ -1,17 +1,11 @@
-use serde::{
-    Serialize,
-    Deserialize
-};
+use crate::strings::{self, keybindings, messages};
+use serde::{Deserialize, Serialize};
+use std::{error::Error, fs::File, io::Read, path::PathBuf};
 use toml;
-use std::{
-    fs::File,
-    io::Read,
-    path::PathBuf,
-};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    pub ui: Option<UI>,
+    pub window: Option<Window>,
     pub viewer: Option<Viewer>,
     pub keybindings: Option<Keybindings>,
 }
@@ -19,7 +13,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            ui: Some(UI::default()),
+            window: Some(Window::default()),
             viewer: Some(Viewer::default()),
             keybindings: Some(Keybindings::default()),
         }
@@ -27,36 +21,46 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load(path: &PathBuf) -> Option<Config> {
-        let mut config_file = File::open(path).ok()?;
+    pub fn load(path: &PathBuf) -> Result<Config, Box<dyn Error>> {
+        let mut config_file = File::open(path)?;
         let mut config_str = String::new();
-        let _ = config_file.read_to_string(&mut config_str);
+        config_file.read_to_string(&mut config_str)?;
 
-        toml::from_str(&mut config_str).ok()?
+        toml::from_str(&config_str).map_err(|err| err.into())
+    }
+
+    pub fn get_default_path() -> Result<PathBuf, Box<dyn Error>> {
+        dirs::config_local_dir()
+            .ok_or_else(|| messages::ERR_NO_DOTCONFIG.into())
+            .map(|path| {
+                path.join(strings::APPLICATION_NAME)
+                    .join(strings::CONFIG_FILENAME)
+            })
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UI {
-    pub title: Option<bool>,
+pub struct Window {
+    pub decorations: Option<bool>,
     pub antialiasing: Option<bool>,
     pub theme: Option<Theme>,
 }
 
-impl Default for UI {
+impl Default for Window {
     fn default() -> Self {
-        UI {
-            title: Some(false),
+        Window {
+            decorations: Some(true),
             antialiasing: Some(true),
             theme: Some(Theme::default()),
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
     Light,
+    #[default]
     Dark,
     Dracula,
     Nord,
@@ -77,12 +81,6 @@ pub enum Theme {
     Moonfly,
     Nightfly,
     Oxocarbon,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
-    }
 }
 
 impl From<Theme> for iced::Theme {
@@ -119,12 +117,27 @@ pub struct Viewer {
     pub max_scale: Option<f32>,
     pub scale_step: Option<f32>,
     pub filter_method: Option<FilterMethod>,
+    pub content_fit: Option<ContentFit>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl Default for Viewer {
+    fn default() -> Self {
+        Viewer {
+            min_scale: Some(0.0),
+            max_scale: Some(100.0),
+            scale_step: Some(0.08),
+            filter_method: Some(FilterMethod::default()),
+            content_fit: Some(ContentFit::default()),
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FilterMethod {
+    #[default]
     Linear,
-    Nearest
+    Nearest,
 }
 
 impl From<FilterMethod> for iced::widget::image::FilterMethod {
@@ -136,19 +149,25 @@ impl From<FilterMethod> for iced::widget::image::FilterMethod {
     }
 }
 
-impl Default for FilterMethod {
-    fn default() -> Self {
-        FilterMethod::Linear
-    }
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentFit {
+    Contain,
+    Cover,
+    Fill,
+    #[default]
+    None,
+    ScaleDown,
 }
 
-impl Default for Viewer {
-    fn default() -> Self {
-        Viewer {
-            min_scale: Some(0.0),
-            max_scale: Some(100.0),
-            scale_step: Some(0.05),
-            filter_method: Some(FilterMethod::default()),
+impl From<ContentFit> for iced::ContentFit {
+    fn from(content_fit: ContentFit) -> Self {
+        match content_fit {
+            ContentFit::Contain => iced::ContentFit::Contain,
+            ContentFit::Cover => iced::ContentFit::Cover,
+            ContentFit::Fill => iced::ContentFit::Fill,
+            ContentFit::None => iced::ContentFit::None,
+            ContentFit::ScaleDown => iced::ContentFit::ScaleDown,
         }
     }
 }
@@ -156,12 +175,16 @@ impl Default for Viewer {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Keybindings {
     pub quit: Option<String>,
+    pub rotate_left: Option<String>,
+    pub rotate_right: Option<String>,
 }
 
 impl Default for Keybindings {
     fn default() -> Self {
         Keybindings {
-            quit: Some("q".to_string()),
+            quit: Some(keybindings::QUIT.to_string()),
+            rotate_left: Some(keybindings::ROTATE_LEFT.to_string()),
+            rotate_right: Some(keybindings::ROTATE_RIGHT.to_string()),
         }
     }
 }

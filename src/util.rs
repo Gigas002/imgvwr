@@ -1,40 +1,34 @@
-use std::{fs, path::PathBuf};
-use std::collections::HashMap;
-
-pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "png", "jpg",
-];
+use crate::strings;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub fn is_file_supported(file_path: &PathBuf) -> Option<bool> {
-    if file_path.is_file() && file_path.exists() {
-        let extension = file_path.extension()?.to_str()?;
+    match file_path {
+        _ if file_path.is_file() && file_path.exists() => {
+            let extension = file_path.extension()?.to_str()?;
 
-        return Some(SUPPORTED_EXTENSIONS.contains(&extension));
+            Some(strings::SUPPORTED_EXTENSIONS.contains(&extension))
+        }
+        _ => None,
     }
-
-    None
 }
 
-// TODO: ordering is.. a bit incorrect
-pub fn get_files(image_path: &PathBuf) -> Option<HashMap<usize, PathBuf>> {
+pub fn get_files(image_path: &Path) -> Option<Vec<PathBuf>> {
     let dir = image_path.parent()?;
 
-    let files: HashMap<usize, PathBuf> = fs::read_dir(dir).ok()?
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| is_file_supported(path).unwrap_or_default())
-        .enumerate()
         .collect();
+    files.sort_by_key(|path| path.file_name().unwrap().to_owned());
 
     Some(files)
 }
 
-pub fn get_current_file_id(file: &PathBuf, files: &HashMap<usize, PathBuf>) -> Option<usize> {
-    for (id, path) in files.iter() {
-        if path.eq(file) {
-            return Some(*id);
-        }
-    }
-
-    None
+pub fn get_file_id(file: &PathBuf, files: &[PathBuf]) -> Option<usize> {
+    files.iter().position(|path| path.eq(file))
 }

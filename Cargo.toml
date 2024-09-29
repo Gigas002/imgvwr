@@ -1,12 +1,24 @@
 [package]
 name = "imgvwr"
 version = "0.1.0"
+authors = ["gigas002", "gigas002 <gigas002@pm.me>"]
 edition = "2021"
+description = "Minimalistic, dead-simple image viewer with only function to view images"
+repository = "https://github.com/Gigas002/imgvwr"
+license = "AGPL-3.0-only"
+keywords = ["imgvwr", "iced", "image", "viewer"]
+categories = ["multimedia::images", "graphics"]
+exclude = [".vscode/", ".gitignore", "*.jpg"]
+
+[lints.rust]
+unsafe_code = "forbid"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-iced = { version = "0", features = ["debug", "image"] }
+clap = { version = "4", default-features = false, features = ["std", "derive"] }
+# iced = { version = "0", default-features = false, features = ["debug", "image"] }
+iced = { git = "https://github.com/Gigas002/iced", branch = "viewer_rotation", default-features = false, features = ["wgpu", "image"] }
+# iced = { git = "https://github.com/iced-rs/iced", default-features = false, features = ["wgpu", "image"] }
+# iced = { path = "../iced", default-features = false, features = ["wgpu", "image"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0"
-image = "0"
+toml =  { version = "0", default-features = false, features = ["parse"] }
 dirs = "5"
