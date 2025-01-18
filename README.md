@@ -33,11 +33,11 @@ For me, the motivation was that I wanted an `oculante`, which would be faster to
 
 ## Usage
 
-`imgvwr -i image.png`
+`imgvwr image.png`
 
 ## Config
 
-Config file isn't created automatically. If you want to use your own config, copy repo's `config.toml` file into `~/.config/imgvwr/config.toml` and edit it. Or you can copy it elsewhere and pass via arguments: `imgvwr -i image.png -c config.toml`
+Config file isn't created automatically. If you want to use your own config, copy repo's `config.toml` file into `~/.config/imgvwr/config.toml` and edit it. Or you can copy it elsewhere and pass via arguments: `imgvwr image.png -c config.toml`
 
 See the `config.toml` file for possible values and explanations
 
