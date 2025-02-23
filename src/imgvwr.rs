@@ -4,12 +4,13 @@ use crate::{
     util,
 };
 use iced::{
+    ContentFit, Element, Length, Subscription, Task,
     keyboard::{
         self,
         key::{Key, Named},
     },
     widget::image::{FilterMethod, Handle, Viewer},
-    window, ContentFit, Element, Length, Subscription, Task,
+    window,
 };
 use std::path::PathBuf;
 

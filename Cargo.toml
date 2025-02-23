@@ -2,7 +2,7 @@
 name = "imgvwr"
 version = "0.1.0"
 authors = ["gigas002", "gigas002 <gigas002@pm.me>"]
-edition = "2021"
+edition = "2024"
 description = "Minimalistic, dead-simple image viewer with only function to view images"
 repository = "https://github.com/Gigas002/imgvwr"
 license = "AGPL-3.0-only"

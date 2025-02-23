@@ -6,7 +6,7 @@ pub mod util;
 
 use crate::{args::Args, config::Config, imgvwr::Imgvwr, strings::messages};
 use clap::Parser;
-use iced::{window::Settings, Theme};
+use iced::{Theme, window::Settings};
 use std::fs;
 
 fn main() -> iced::Result {
