@@ -52,12 +52,3 @@ As for common issues:
 - if it's related to image-viewing capabilities, you should check out the [iced](https://github.com/iced-rs/iced) repo first, if your feature is implemented there. E.g. you want more `FilterMethod`s to be available. If there are such methods implemented in `iced` and not in `imgvwr` - file an issue/PR here and I'll add the support for it. If it's not - file an issue or PR into `iced` repo for this feature to be implemented there first
 
 - if it's related to image modifications (paint, crop, etc) or a directory view then it's not planned
-
-## TODO
-
-- [x] `FilterMethod` support for `Viewer` -> iced #2324
-- [x] `ContentFit` support for `Viewer` -> iced #2330
-- [x] rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2467
-- [x] moar perf improvements -> iced #2382
-- [ ] [repo] ci/cd
-- [ ] [repo] dependabot
