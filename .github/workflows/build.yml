@@ -1,0 +1,30 @@
+name: build
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: pacman
+      run: pacman -Syu --noconfirm rust rust-src egl-wayland egl-gbm wayland base-devel mesa
+
+    - name: cargo-fmt
+      run: cargo fmt -- --check
+
+    - name: cargo-build
+      run: |
+        rm Cargo.lock
+        cargo build --release
+
+    - name: cargo-clippy
+      run:
+        cargo clippy -- -D warnings
