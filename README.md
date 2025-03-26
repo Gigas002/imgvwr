@@ -57,7 +57,7 @@ As for common issues:
 
 - [x] `FilterMethod` support for `Viewer` -> iced #2324
 - [x] `ContentFit` support for `Viewer` -> iced #2330
-- [ ] *in progress* rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2467
+- [x] rotate `widget` instead of `image` to improve perf/memory consuming -> iced #2467
 - [x] moar perf improvements -> iced #2382
 - [ ] [repo] ci/cd
 - [ ] [repo] dependabot
