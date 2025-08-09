@@ -29,14 +29,18 @@ fn main() -> iced::Result {
     let antialiasing = window.antialiasing.unwrap_or_default();
     let theme = window.theme.unwrap_or_default();
 
-    iced::application(Imgvwr::title, Imgvwr::update, Imgvwr::view)
-        .window(Settings {
-            decorations,
-            ..Settings::default()
-        })
-        .subscription(Imgvwr::subscription)
-        .antialiasing(antialiasing)
-        .centered()
-        .theme(move |_| Theme::from(theme.to_owned()))
-        .run_with(move || Imgvwr::new(&args.img, &viewer, keybindings.to_owned()))
+    iced::application(
+        move || Imgvwr::new(&args.img, &viewer, keybindings.to_owned()),
+        Imgvwr::update,
+        Imgvwr::view,
+    )
+    .window(Settings {
+        decorations,
+        ..Settings::default()
+    })
+    .subscription(Imgvwr::subscription)
+    .antialiasing(antialiasing)
+    .centered()
+    .theme(move |_| Theme::from(theme.to_owned()))
+    .run()
 }

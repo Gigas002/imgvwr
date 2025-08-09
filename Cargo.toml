@@ -16,9 +16,17 @@ unsafe_code = "forbid"
 [dependencies]
 clap = { version = "4", default-features = false, features = ["std", "derive"] }
 # iced = { version = "0", default-features = false, features = ["debug", "image"] }
-iced = { git = "https://github.com/Gigas002/iced", branch = "viewer_rotation_updatable", default-features = false, features = ["wgpu", "image"] }
+iced = { git = "https://github.com/Gigas002/iced", branch = "viewer_rotation_updatable", default-features = false, features = [
+    "wgpu",
+    "image",
+    "thread-pool",
+] }
 # iced = { git = "https://github.com/iced-rs/iced", default-features = false, features = ["wgpu", "image"] }
 # iced = { path = "../iced", default-features = false, features = ["wgpu", "image"] }
 serde = { version = "1", features = ["derive"] }
-toml =  { version = "0", default-features = false, features = ["parse"] }
+toml = { version = "0", default-features = false, features = [
+    "parse",
+    "std",
+    "serde",
+] }
 dirs = "6"
