@@ -28,7 +28,7 @@ pub struct Imgvwr {
 
 impl Imgvwr {
     fn switch_image(&mut self, direction: &Direction) -> Task<Message> {
-        let current_id = &self.image_id;
+        let current_id = self.image_id;
         let max_id = self.images.len().checked_sub(1).unwrap();
 
         let image_id = match direction {
@@ -119,7 +119,7 @@ impl Imgvwr {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let image_path = self.images.get(self.image_id).unwrap();
         let handle = Handle::from_path(image_path);
 
