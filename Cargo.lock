@@ -667,7 +667,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 [[package]]
 name = "dpi"
 version = "0.1.1"
-source = "git+https://github.com/iced-rs/winit.git?rev=11414b6aa45699f038114e61b4ddf5102b2d3b4b#11414b6aa45699f038114e61b4ddf5102b2d3b4b"
+source = "git+https://github.com/iced-rs/winit.git?rev=05b8ff17a06562f0a10bb46e6eaacbe2a95cb5ed#05b8ff17a06562f0a10bb46e6eaacbe2a95cb5ed"
 
 [[package]]
 name = "drm"
@@ -1153,7 +1153,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 [[package]]
 name = "iced"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "iced_core",
  "iced_debug",
@@ -1163,13 +1163,13 @@ dependencies = [
  "iced_widget",
  "iced_winit",
  "image",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
 name = "iced_core"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "bitflags 2.9.2",
  "bytes",
@@ -1179,14 +1179,14 @@ dependencies = [
  "num-traits",
  "rustc-hash 2.1.1",
  "smol_str",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "web-time",
 ]
 
 [[package]]
 name = "iced_debug"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "iced_core",
  "iced_futures",
@@ -1196,7 +1196,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "futures",
  "iced_core",
@@ -1209,7 +1209,7 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "bitflags 2.9.2",
  "bytemuck",
@@ -1222,14 +1222,14 @@ dependencies = [
  "log",
  "raw-window-handle",
  "rustc-hash 2.1.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "iced_program"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "iced_graphics",
  "iced_runtime",
@@ -1238,32 +1238,32 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
  "iced_wgpu",
  "log",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
 name = "iced_runtime"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "bytes",
  "iced_core",
  "iced_debug",
  "iced_futures",
  "raw-window-handle",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
 name = "iced_tiny_skia"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -1279,7 +1279,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "bitflags 2.9.2",
  "bytemuck",
@@ -1291,34 +1291,33 @@ dependencies = [
  "iced_graphics",
  "log",
  "rustc-hash 2.1.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "wgpu",
 ]
 
 [[package]]
 name = "iced_widget"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "iced_renderer",
- "iced_runtime",
  "log",
  "num-traits",
  "rustc-hash 2.1.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "iced_winit"
 version = "0.14.0-dev"
-source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#4abe84cc29a5fb915a8439a4341cf613ca8b366a"
+source = "git+https://github.com/Gigas002/iced?branch=viewer_rotation_updatable#638059d3ba8eac3c6b3a0691f081c42adbc85063"
 dependencies = [
  "iced_debug",
  "iced_program",
  "log",
  "rustc-hash 2.1.1",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tracing",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3904,7 +3903,7 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 [[package]]
 name = "winit"
 version = "0.30.8"
-source = "git+https://github.com/iced-rs/winit.git?rev=11414b6aa45699f038114e61b4ddf5102b2d3b4b#11414b6aa45699f038114e61b4ddf5102b2d3b4b"
+source = "git+https://github.com/iced-rs/winit.git?rev=05b8ff17a06562f0a10bb46e6eaacbe2a95cb5ed#05b8ff17a06562f0a10bb46e6eaacbe2a95cb5ed"
 dependencies = [
  "ahash",
  "android-activity",
