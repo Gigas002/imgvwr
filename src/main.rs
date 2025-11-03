@@ -24,13 +24,13 @@ fn main() -> iced::Result {
     let window = config.window.unwrap_or_default();
     let viewer = config.viewer.unwrap_or_default();
     let keybindings = config.keybindings.unwrap_or_default();
-
+    let img_path = args.img;
     let decorations = window.decorations.unwrap_or_default();
     let antialiasing = window.antialiasing.unwrap_or_default();
-    let theme = window.theme.unwrap_or_default();
+    let theme = Theme::from(window.theme.unwrap_or_default());
 
     iced::application(
-        move || Imgvwr::new(&args.img, &viewer, keybindings.to_owned()),
+        move || Imgvwr::new(&img_path, &viewer, keybindings.to_owned()),
         Imgvwr::update,
         Imgvwr::view,
     )
@@ -41,6 +41,6 @@ fn main() -> iced::Result {
     .subscription(Imgvwr::subscription)
     .antialiasing(antialiasing)
     .centered()
-    .theme(move |_| Theme::from(theme.to_owned()))
+    .theme(theme)
     .run()
 }

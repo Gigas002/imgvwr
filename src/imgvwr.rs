@@ -4,13 +4,12 @@ use crate::{
     util,
 };
 use iced::{
-    ContentFit, Element, Length, Subscription, Task,
+    ContentFit, Element, Length, Subscription, Task, exit,
     keyboard::{
         self,
         key::{Key, Named},
     },
     widget::image::{FilterMethod, Handle, Viewer},
-    window,
 };
 use std::path::PathBuf;
 
@@ -104,9 +103,7 @@ impl Imgvwr {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::KeyPressed(key) => match key {
-                _ if key.eq(self.keybindings.quit.as_ref().unwrap()) => {
-                    window::get_latest().and_then(window::close)
-                }
+                _ if key.eq(self.keybindings.quit.as_ref().unwrap()) => exit(),
                 _ if key.eq(self.keybindings.rotate_left.as_ref().unwrap()) => {
                     self.rotate_image(&Rotation::Left)
                 }
