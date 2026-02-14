@@ -4,8 +4,7 @@ use crate::{
     util,
 };
 use iced::{
-    ContentFit, Element, Length, Subscription, Task, exit,
-    event,
+    ContentFit, Element, Length, Subscription, Task, event, exit,
     keyboard::key::{Key, Named},
     widget::image::{FilterMethod, Handle, Viewer},
 };
