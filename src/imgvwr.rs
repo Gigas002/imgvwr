@@ -5,10 +5,8 @@ use crate::{
 };
 use iced::{
     ContentFit, Element, Length, Subscription, Task, exit,
-    keyboard::{
-        self,
-        key::{Key, Named},
-    },
+    event,
+    keyboard::key::{Key, Named},
     widget::image::{FilterMethod, Handle, Viewer},
 };
 use std::path::PathBuf;
@@ -134,16 +132,21 @@ impl Imgvwr {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        keyboard::on_key_press(|key, _modifiers| match key.as_ref() {
-            Key::Character(c) => Some(Message::KeyPressed(c.to_string())),
-            Key::Named(key) => {
-                let direction = match key {
-                    Named::ArrowLeft => Some(Direction::Previous),
-                    Named::ArrowRight => Some(Direction::Next),
-                    _ => None,
-                };
+        event::listen_with(|event, _status, _window| match event {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+                match key.as_ref() {
+                    Key::Character(c) => Some(Message::KeyPressed(c.to_string())),
+                    Key::Named(key) => {
+                        let direction = match key {
+                            Named::ArrowLeft => Some(Direction::Previous),
+                            Named::ArrowRight => Some(Direction::Next),
+                            _ => None,
+                        };
 
-                direction.map(Message::Move)
+                        direction.map(Message::Move)
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         })
