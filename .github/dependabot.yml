@@ -8,6 +8,10 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      action-updates:
+        patterns:
+          - "*"
 
   # Rust projects
   - package-ecosystem: "cargo"
@@ -15,3 +19,7 @@ updates:
       - "/"
     schedule:
       interval: "daily"
+    groups:
+      cargo-updates:
+        patterns:
+          - "*"
