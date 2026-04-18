@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "imgvwr"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -811,7 +811,7 @@ checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 
 [[package]]
 name = "libimgvwr"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "dav1d",
  "image",
