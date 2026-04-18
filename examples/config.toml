@@ -1,0 +1,55 @@
+# imgvwr example configuration
+# Copy to ~/.config/imgvwr/config.toml and uncomment / adjust as needed.
+
+# ── Window ────────────────────────────────────────────────────────────────────
+[window]
+# Show the window title bar (requires feature "decorations").
+decorations = false
+
+# Apply high-quality resampling when scaling images.
+# Set to true to enable filtering at all zoom levels (slower).
+antialiasing = false
+
+# ── Viewer ────────────────────────────────────────────────────────────────────
+[viewer]
+# Minimum zoom-out factor (1.0 = original size).
+min_scale = 0.1
+
+# Maximum zoom-in factor.
+max_scale = 100.0
+
+# Zoom step per scroll notch as a fraction of the current scale (multiplicative).
+# 0.1 = 10 % per notch — raise for faster zoom, lower for finer control.
+scale_step = 0.1
+
+# Resampling filter used when scaling images.
+# Options: "nearest" | "triangle" | "catmull_rom" | "gaussian" | "lanczos3"
+#   nearest    — fastest, pixelated at large zoom
+#   triangle   — bilinear, good balance of speed and quality
+#   catmull_rom — bicubic, sharper than triangle
+#   gaussian   — soft/blurry, rarely preferred
+#   lanczos3   — best quality, slowest (default)
+filter_method = "nearest"
+
+# ── Keybindings ───────────────────────────────────────────────────────────────
+# Requires feature "keybinds". When the feature is disabled these values are
+# ignored and the built-in defaults below are always used.
+[keybindings]
+# Close the application.
+quit = "q"
+
+# Rotate image 90° counter-clockwise.
+rotate_left = "["
+
+# Rotate image 90° clockwise.
+rotate_right = "]"
+
+# Delete the current file from disk and advance to the next image.
+delete = "Delete"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Requires feature "logging". The RUST_LOG environment variable overrides this
+# value when set.
+[logging]
+# Log level: "error" | "warn" | "info" | "debug" | "trace"
+level = "warn"

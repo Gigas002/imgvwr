@@ -1,0 +1,45 @@
+[package]
+name = "libimgvwr"
+version = "0.1.0"
+description = "Core library for the imgvwr image viewer"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["png"]
+png = ["image/png"]
+jpeg = ["image/jpeg"]
+webp = ["image/webp"]
+avif = ["image/avif-native"]
+jxl = ["dep:jxl"]
+jxl-anim = ["jxl", "dep:libc"]
+gif = ["image/gif", "dep:libc"]
+avif-anim = ["dep:dav1d", "dep:mp4parse", "dep:libc"]
+webp-anim = ["webp", "dep:libc"]
+apng = ["png", "dep:libc"]
+decorations = []
+gpu-vulkan = ["dep:wgpu", "dep:pollster", "wgpu/vulkan", "wgpu/wgsl"]
+gpu-gles = ["dep:wgpu", "dep:pollster", "wgpu/gles", "wgpu/wgsl"]
+dmabuf = ["gpu-vulkan", "dep:raw-window-handle"]
+
+[dependencies]
+image = { version = "0.25", default-features = false }
+tracing = "0.1"
+memmap2 = "0.9"
+rustix = { version = "1", features = ["fs"] }
+libc = { version = "0.2", optional = true }
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+xkbcommon = "0.9"
+wgpu = { version = "29", optional = true, default-features = false, features = ["wgsl", "vulkan", "gles"] }
+raw-window-handle = { version = "0.6", optional = true }
+pollster = { version = "0.4", optional = true }
+jxl = { version = "0.4", optional = true, default-features = false }
+dav1d = { version = "0.11", optional = true }
+mp4parse = { version = "0.17", optional = true, features = ["unstable-api"] }
+
+[dev-dependencies]
+tempfile = "3"

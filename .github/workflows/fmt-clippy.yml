@@ -1,0 +1,52 @@
+name: fmt and clippy
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - --all-features
+          - --no-default-features
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libdav1d-dev
+      - name: Clippy (${{ matrix.features }})
+        run: cargo clippy --workspace --all-targets ${{ matrix.features }} -- -D warnings

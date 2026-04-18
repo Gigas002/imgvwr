@@ -1,25 +1,10 @@
-# Please see the documentation for all configuration options:
-# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-
 version: 2
 updates:
-  # Maintain dependencies for GitHub Actions
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: cargo
+    directory: /
     schedule:
-      interval: "daily"
-    groups:
-      action-updates:
-        patterns:
-          - "*"
-
-  # Rust projects
-  - package-ecosystem: "cargo"
-    directories:
-      - "/"
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "daily"
-    groups:
-      cargo-updates:
-        patterns:
-          - "*"
+      interval: weekly

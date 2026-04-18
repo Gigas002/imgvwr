@@ -1,30 +1,50 @@
-name: build
+name: Build
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: all-features
+            cargo_args: --workspace --release --all-features
+          - name: default
+            cargo_args: --workspace --release
+          - name: minimal
+            cargo_args: --workspace --release --no-default-features
+
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
 
     steps:
-    - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
 
-    - name: pacman
-      run: pacman -Syu --noconfirm rust rust-src egl-wayland egl-gbm wayland base-devel mesa
+      - uses: dtolnay/rust-toolchain@stable
 
-    - name: cargo-fmt
-      run: cargo fmt -- --check
+      - name: Build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
 
-    - name: cargo-build
-      run: |
-        rm Cargo.lock
-        cargo build --release
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libdav1d-dev
 
-    - name: cargo-clippy
-      run:
-        cargo clippy -- -D warnings
+      - name: Build (${{ matrix.name }})
+        run: cargo build ${{ matrix.cargo_args }}
