@@ -166,4 +166,6 @@ AGPL-3.0-only. See [LICENSE](LICENSE.txt).
 
 > Pre-1.0.0 history is preserved on the [`rust` branch of imv fork repo](https://github.com/Gigas002/imv/tree/rust).
 
+> The old [iced](https://github.com/iced-rs/iced)-powered tree lives on the [`iced` branch](https://github.com/Gigas002/imv/tree/iced).
+
 Thanks to **Harry Jeffery** for creating [imv](https://sr.ht/~exec64/imv/). It is the reference for what a minimal Wayland image viewer should be, and the direct inspiration for this project.
