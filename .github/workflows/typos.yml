@@ -1,0 +1,16 @@
+# Requires `.typos.toml` to exclude legacy C/Meson paths until Phase 10.
+name: typos
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: crate-ci/typos@v1

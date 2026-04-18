@@ -1,38 +1,10 @@
-[package]
-name = "imgvwr"
-version = "0.1.0"
-authors = ["gigas002", "gigas002 <gigas002@pm.me>"]
+[workspace]
+members = ["libimgvwr", "imgvwr"]
+resolver = "3"
+
+[workspace.package]
 edition = "2024"
-description = "Minimalistic, dead-simple image viewer with only function to view images"
-repository = "https://github.com/Gigas002/imgvwr"
 license = "AGPL-3.0-only"
-keywords = ["imgvwr", "iced", "image", "viewer"]
-categories = ["multimedia::images", "graphics"]
-exclude = [".vscode/", ".gitignore", "*.jpg"]
-
-[lints.rust]
-unsafe_code = "forbid"
-
-[dependencies]
-clap = { version = "4", default-features = false, features = ["std", "derive"] }
-# iced = { version = "0", default-features = false, features = ["debug", "image"] }
-iced = { git = "https://github.com/Gigas002/iced", branch = "viewer_rotation", default-features = false, features = [
-    "wgpu",
-    "wayland",
-    "image",
-    "thread-pool",
-] }
-# iced = { git = "https://github.com/iced-rs/iced", default-features = false, features = ["wgpu", "image"] }
-# iced = { path = "../iced", default-features = false, features = [
-#     "wgpu",
-#     "wayland",
-#     "image",
-#     "thread-pool",
-# ] }
-serde = { version = "1", features = ["derive"] }
-toml = { version = "1", default-features = false, features = [
-    "parse",
-    "std",
-    "serde",
-] }
-dirs = "6"
+authors = ["Gigas002 <gigas002@pm.me>"]
+repository = "https://github.com/Gigas002/imv"
+homepage = "https://github.com/Gigas002/imv"

@@ -1,0 +1,7 @@
+[default.extend-words]
+# Plural of the PNG acronym (PNGs).
+PN = "PN"
+# Loop variable in WGSL shaders (y-axis index).
+iy = "iy"
+# Mathematical abbreviation for numerator (image-rs API: numer_denom_ms()).
+numer = "numer"

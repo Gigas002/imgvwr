@@ -1,0 +1,46 @@
+[package]
+name = "imgvwr"
+version = "0.1.0"
+description = "Minimal Wayland image viewer"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "imgvwr"
+path = "src/main.rs"
+
+[features]
+default = ["png", "logging", "config", "keybinds"]
+logging = ["dep:tracing-subscriber"]
+config = ["dep:toml", "dep:serde"]
+keybinds = []
+png = ["libimgvwr/png"]
+jpeg = ["libimgvwr/jpeg"]
+webp = ["libimgvwr/webp"]
+avif = ["libimgvwr/avif"]
+avif-anim = ["libimgvwr/avif-anim"]
+jxl = ["libimgvwr/jxl"]
+jxl-anim = ["libimgvwr/jxl-anim"]
+gif = ["libimgvwr/gif"]
+webp-anim = ["libimgvwr/webp-anim"]
+apng = ["libimgvwr/apng"]
+decorations = ["libimgvwr/decorations"]
+gpu-vulkan = ["libimgvwr/gpu-vulkan"]
+gpu-gles = ["libimgvwr/gpu-gles"]
+dmabuf       = ["gpu-vulkan", "libimgvwr/dmabuf"]
+completions  = ["dep:clap_complete", "dep:clap_complete_nushell"]
+
+[dependencies]
+libimgvwr = { path = "../libimgvwr", default-features = false }
+image = { version = "0.25", default-features = false }
+
+clap = { version = "4", features = ["derive"] }
+clap_complete = { version = "4", optional = true }
+clap_complete_nushell = { version = "4", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+toml = { version = "1.1", optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }

@@ -1,54 +1,169 @@
 # imgvwr
 
-Minimalistic, dead-simple image viewer with only function to view images, which follows unix philosophy
+A minimal, fast image viewer for Wayland, written in Rust.
 
-Powered by [iced](https://github.com/iced-rs/iced). You can think of this as a `viewer` widget from `iced`, enhanced with configurable options and minor additions
+imgvwr is heavily inspired by [imv](https://sr.ht/~exec64/imv/) by Harry Jeffery — a great piece of software that set the bar for what a lightweight Wayland image viewer should feel like. imgvwr is **not** a port, fork, or direct descendant of imv. It is an independent reimplementation that shares the same spirit: stay small, stay fast, stay out of the way. It does not aim to replicate every feature imv has.
 
-Features:
+---
 
-- lightweight
-- native wayland support on linux
-- crossplatform
-- shows images
+## Requirements
 
-Cons:
+**Runtime:**
 
-- shows not all images (see `image` crate [features list](https://docs.rs/crate/image/latest/features))
-- shows not moving images (e.g. `gif`) -> iced #1412
+- A Wayland compositor
+- `libwayland-client`
+- `libxkbcommon`
 
-Prefer using better software if you want more features and proper support
+**Optional runtime dependencies (feature-gated):**
 
-## Why then?
+| Feature                      | Runtime requirement                                                  |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `gpu-vulkan`                 | Vulkan-capable driver (Mesa, NVIDIA, etc.)                           |
+| `gpu-gles`                   | EGL + OpenGL ES 2.0 driver                                           |
+| `dmabuf`                     | Compositor with `zwp_linux_dmabuf_v1` support (implies `gpu-vulkan`) |
+| `decorations`                | Compositor with `zxdg_decoration_manager_v1` support                 |
+| `avif` / `avif-anim`         | `libdav1d`                                                           |
+| `jxl` / `jxl-anim`           | `libjxl`                                                             |
+| `gif` / `webp-anim` / `apng` | `libc` (virtually always present)                                    |
 
-Because there's some stuff I don't like, of course. Personally, I'd recommend to use these exceptional tools:
+**Build-time:**
 
-- [imageglass](https://github.com/d2phap/ImageGlass) -- I remember it being pretty good, but since it's windows-only I haven't used it for last several years, so I don't know what's current state of the project
-- [qimgv](https://github.com/easymodo/qimgv) -- I think it's the best tool for x11 session, but it has some minor issues on wayland session. These are partially resolved when compiling it with `qt6`, but it needs proper migration for this to work out. The main *cons* it that it's not developed actively for last two years. For pros, it has the best upscaling filter I've encountered in open-source image viewers so far and handles numerous formats. I also absolutely love how `gif`s playback implemented out here
-- [imv](https://sr.ht/~exec64/imv) -- nice and minimalistic, great wayland support, but not enough configuration options available, e.g. it lacks configuring floating point scaling value (only integer values are supported). Also, like `qimgv` -  project is a bit dead, though it still recieves useful PRs and feedback
-- [oculante](https://github.com/woelper/oculante) -- viewer with extremely friendly and passionate maintainer. Supports all modern OSes, works great on wayland, nice performance and so on. As for cons, there's no binary package for it and its build time is VERY slow and resource-consuming because of heavy dependency tree. The supported format list is also a bit smaller than the `qimgv`'s for example
+- Rust toolchain (edition 2024, stable)
+- `pkg-config`
+- Wayland protocol headers (`wayland-protocols`)
 
-Of course there are more tools for this purpose here and there, but I didn't like those for a different reasons, so didn't use them for quite enough time to remember
+---
 
-For me, the motivation was that I wanted an `oculante`, which would be faster to compile, without features I don't need and with a simple code base, so I can fix it right away or file a pr/issue in appropriate place. That's it. It handles formats I need, it handles wayland natively, its performance is not bad and it has a config file with all the options that I use. It will *probably* even work on [RedoxOS](https://gitlab.redox-os.org/redox-os/redox/) without changes to a code base!
+## Building
+
+Clone the repository and build with Cargo:
+
+```sh
+git clone https://github.com/Gigas002/imv
+cd imv
+cargo build --release
+```
+
+The resulting binary is at `target/release/imgvwr`.
+
+### Selecting features
+
+By default only PNG support is compiled in. Enable additional formats and backends with `--features`:
+
+```sh
+# Common formats
+cargo build --release --features jpeg,webp,avif
+
+# Full format set
+cargo build --release --features jpeg,webp,avif,avif-anim,jxl,jxl-anim,gif,webp-anim,apng
+
+# GPU-accelerated rendering via Vulkan
+cargo build --release --features gpu-vulkan
+
+# GPU via OpenGL ES / EGL
+cargo build --release --features gpu-gles
+
+# DMA-BUF zero-copy (requires gpu-vulkan)
+cargo build --release --features dmabuf
+
+# Server-side window decorations
+cargo build --release --features decorations
+
+# Shell completions (bash, zsh, fish, nushell, elvish, powershell)
+cargo build --release --features completions
+
+# Everything
+cargo build --release --all-features
+```
+
+### Feature reference
+
+| Feature       | Default | Description                                      |
+| ------------- | ------- | ------------------------------------------------ |
+| `png`         | yes     | PNG decoding                                     |
+| `jpeg`        | no      | JPEG decoding                                    |
+| `webp`        | no      | WebP (static) decoding                           |
+| `webp-anim`   | no      | WebP animation                                   |
+| `avif`        | no      | AVIF (static) decoding via dav1d                 |
+| `avif-anim`   | no      | AVIF animation via dav1d + mp4parse              |
+| `jxl`         | no      | JPEG XL (static) decoding                        |
+| `jxl-anim`    | no      | JPEG XL animation                                |
+| `gif`         | no      | GIF (animated) decoding                          |
+| `apng`        | no      | Animated PNG decoding                            |
+| `decorations` | no      | Server-side window decorations                   |
+| `gpu-vulkan`  | no      | GPU rendering via wgpu/Vulkan                    |
+| `gpu-gles`    | no      | GPU rendering via wgpu/OpenGL ES                 |
+| `dmabuf`      | no      | DMA-BUF zero-copy display (implies `gpu-vulkan`) |
+| `logging`     | yes     | `RUST_LOG`-driven tracing output                 |
+| `config`      | yes     | TOML config file parsing                         |
+| `keybinds`    | yes     | Configurable keybindings                         |
+| `completions` | no      | Shell completion script generation               |
+
+---
 
 ## Usage
 
-`imgvwr image.png`
+```sh
+imgvwr [OPTIONS] [PATHS]...
+```
 
-## Config
+Open one or more image files:
 
-Config file isn't created automatically. If you want to use your own config, copy repo's `config.toml` file into `~/.config/imgvwr/config.toml` and edit it. Or you can copy it elsewhere and pass via arguments: `imgvwr image.png -c config.toml`
+```sh
+imgvwr image.png
+imgvwr *.jpg
+imgvwr ~/pictures/**/*.webp
+```
 
-See the `config.toml` file for possible values and explanations
+### CLI options
 
-## I want %feature%
+| Option                             | Description                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `[PATHS]...`                       | One or more image file paths to open                                         |
+| `--config <PATH>`                  | Load an additional config file (layered on top of system/user config)        |
+| `-d, --decorations [true\|false]`  | Override window decoration setting                                           |
+| `-a, --antialiasing [true\|false]` | Override antialiasing setting                                                |
+| `--min-scale <FLOAT>`              | Minimum zoom factor (e.g. `0.1`)                                             |
+| `--max-scale <FLOAT>`              | Maximum zoom factor (e.g. `100.0`)                                           |
+| `--scale-step <FLOAT>`             | Zoom step per scroll notch (e.g. `0.1`)                                      |
+| `--filter-method <METHOD>`         | Scaling filter: `nearest`, `triangle`, `catmull-rom`, `gaussian`, `lanczos3` |
+| `--log-level <LEVEL>`              | Log level: `error`, `warn`, `info`, `debug`, `trace`                         |
+| `-h, --help`                       | Print help                                                                   |
 
-I prefer implementing new features in upstream projects and contributing a PR there to maintain this project's simplicity, so in *most* cases your issues are probably realted to something upstream. I also don't want to add any more external dependencies, at least for now, so keep it in mind. But feel free to ask anything in issues here too, I'm not against it in any way
+CLI options override config file values.
 
-As for common issues:
+### Default keybindings
 
-- if it's related to supported image formats, then you should check out the [image](https://github.com/image-rs/image) repo first. If the desired image format isn't supported in `image` - you can file a new issue there. Format's support in `iced` *may* be important too though, since current implementation relies on their format support (which relies on `image` crate), but AFAIK we may have an opportunity to load bytes directly after iced #2356 merges
+| Key      | Action                                    |
+| -------- | ----------------------------------------- |
+| `q`      | Quit                                      |
+| `[`      | Rotate 90° counter-clockwise              |
+| `]`      | Rotate 90° clockwise                      |
+| `Delete` | Delete current file from disk and advance |
 
-- if it's related to image-viewing capabilities, you should check out the [iced](https://github.com/iced-rs/iced) repo first, if your feature is implemented there. E.g. you want more `FilterMethod`s to be available. If there are such methods implemented in `iced` and not in `imgvwr` - file an issue/PR here and I'll add the support for it. If it's not - file an issue or PR into `iced` repo for this feature to be implemented there first
+---
 
-- if it's related to image modifications (paint, crop, etc) or a directory view then it's not planned
+## Configuration
+
+imgvwr loads config in this order, with later sources overriding earlier ones:
+
+1. Built-in defaults
+2. System config: `/etc/imgvwr/config.toml`
+3. User config: `$XDG_CONFIG_HOME/imgvwr/config.toml` (falls back to `~/.config/imgvwr/config.toml`)
+4. `--config <PATH>` override (if provided)
+
+An example config with all options documented is in [`examples/config.toml`](examples/config.toml).
+
+---
+
+## License
+
+AGPL-3.0-only. See [LICENSE](LICENSE.txt).
+
+---
+
+## Acknowledgements
+
+> Pre-1.0.0 history is preserved on the [`rust` branch of imv fork repo](https://github.com/Gigas002/imv/tree/rust).
+
+Thanks to **Harry Jeffery** for creating [imv](https://sr.ht/~exec64/imv/). It is the reference for what a minimal Wayland image viewer should be, and the direct inspiration for this project.
