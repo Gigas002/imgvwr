@@ -1,6 +1,6 @@
 [package]
 name = "libimgvwr"
-version = "0.1.0"
+version = "1.0.0"
 description = "Core library for the imgvwr image viewer"
 edition.workspace = true
 license.workspace = true
