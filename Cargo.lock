@@ -842,7 +842,6 @@ dependencies = [
  "dav1d",
  "image",
  "jxl",
- "libc",
  "memmap2",
  "mp4parse",
  "pollster",
