@@ -15,11 +15,11 @@ jpeg = ["image/jpeg"]
 webp = ["image/webp"]
 avif = ["image/avif-native"]
 jxl = ["dep:jxl"]
-jxl-anim = ["jxl", "dep:libc"]
-gif = ["image/gif", "dep:libc"]
-avif-anim = ["dep:dav1d", "dep:mp4parse", "dep:libc"]
-webp-anim = ["webp", "dep:libc"]
-apng = ["png", "dep:libc"]
+jxl-anim = ["jxl"]
+gif = ["image/gif"]
+avif-anim = ["dep:dav1d", "dep:mp4parse"]
+webp-anim = ["webp"]
+apng = ["png"]
 decorations = []
 gpu-vulkan = ["dep:wgpu", "dep:pollster", "wgpu/vulkan", "wgpu/wgsl"]
 gpu-gles = ["dep:wgpu", "dep:pollster", "wgpu/gles", "wgpu/wgsl"]
@@ -29,8 +29,7 @@ dmabuf = ["gpu-vulkan", "dep:raw-window-handle"]
 image = { version = "0.25", default-features = false }
 tracing = "0.1"
 memmap2 = "0.9"
-rustix = { version = "1", features = ["fs"] }
-libc = { version = "0.2", optional = true }
+rustix = { version = "1", features = ["fs", "event", "time"] }
 wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 xkbcommon = "0.9"

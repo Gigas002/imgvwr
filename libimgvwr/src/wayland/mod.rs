@@ -310,18 +310,26 @@ impl WaylandContext {
         ))]
         {
             use std::os::fd::AsFd;
-            use std::os::unix::io::AsRawFd;
 
             self.flush()?;
 
             if let Some(guard) = self.event_queue.prepare_read() {
-                let mut pfd = libc::pollfd {
-                    fd: self.conn.as_fd().as_raw_fd(),
-                    events: libc::POLLIN,
-                    revents: 0,
+                let fd = self.conn.as_fd();
+                let mut pfd = [rustix::event::PollFd::new(
+                    &fd,
+                    rustix::event::PollFlags::IN,
+                )];
+                let timeout_spec;
+                let timeout = if timeout_ms < 0 {
+                    None
+                } else {
+                    timeout_spec = rustix::time::Timespec {
+                        tv_sec: (timeout_ms / 1000) as i64,
+                        tv_nsec: ((timeout_ms % 1000) * 1_000_000) as i64,
+                    };
+                    Some(&timeout_spec)
                 };
-                // SAFETY: &mut pfd is valid for the duration of the call.
-                unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+                let _ = rustix::event::poll(&mut pfd, timeout);
                 // Always attempt the read: WouldBlock means no data arrived
                 // (spurious wakeup or data already drained), which is fine.
                 match guard.read() {
