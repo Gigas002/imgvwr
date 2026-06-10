@@ -41,7 +41,7 @@ jobs:
         run: |
           cargo llvm-cov --all-features -p imgvwr --lcov --output-path lcov-imgvwr.info
       - name: Upload libimgvwr coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: ./lcov-libimgvwr.info
           flags: libimgvwr
@@ -51,7 +51,7 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload imgvwr coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: ./lcov-imgvwr.info
           flags: imgvwr
