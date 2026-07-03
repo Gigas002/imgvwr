@@ -5,3 +5,4 @@ PN = "PN"
 iy = "iy"
 # Mathematical abbreviation for numerator (image-rs API: numer_denom_ms()).
 numer = "numer"
+ratatui = "ratatui"
