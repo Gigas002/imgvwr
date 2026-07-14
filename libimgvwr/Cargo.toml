@@ -33,9 +33,9 @@ rustix = { version = "1", features = ["fs", "event", "time"] }
 wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 xkbcommon = "0.9"
-wgpu = { version = "29", optional = true, default-features = false, features = ["wgsl", "vulkan", "gles"] }
+wgpu = { version = "30", optional = true, default-features = false, features = ["wgsl", "vulkan", "gles"] }
 raw-window-handle = { version = "0.6", optional = true }
-pollster = { version = "0.4", optional = true }
+pollster = { version = "1", optional = true }
 jxl = { version = "0.4", optional = true, default-features = false }
 dav1d = { version = "0.11", optional = true }
 mp4parse = { version = "0.17", optional = true, features = ["unstable-api"] }
