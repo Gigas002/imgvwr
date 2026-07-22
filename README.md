@@ -39,8 +39,8 @@ imgvwr is heavily inspired by [imv](https://sr.ht/~exec64/imv/) by Harry Jeffery
 Clone the repository and build with Cargo:
 
 ```sh
-git clone https://github.com/Gigas002/imv
-cd imv
+git clone https://github.com/Gigas002/imgvwr
+cd imgvwr
 cargo build --release
 ```
 
