@@ -804,7 +804,6 @@ impl GpuContext {
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: surface_format,
-                color_space: wgpu::SurfaceColorSpace::Auto,
                 width,
                 height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -986,7 +985,7 @@ impl GpuContext {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        self.queue.present(frame);
+        frame.present();
         Ok(())
     }
 }
