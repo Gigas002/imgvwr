@@ -249,7 +249,6 @@ impl GpuContext {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
                     force_fallback_adapter: false,
-                    apply_limit_buckets: false,
                 })
                 .await
                 .map_err(|_| GpuError::NoAdapter)?;
@@ -415,7 +414,7 @@ pub(crate) fn readback(ctx: &GpuContext, tex: &wgpu::Texture, w: u32, h: u32) ->
         .ok();
     receiver.recv().unwrap().unwrap();
 
-    let raw = slice.get_mapped_range().expect("mapped staging buffer");
+    let raw = slice.get_mapped_range();
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for row in 0..h {
         let start = (row * padded_row) as usize;
@@ -772,7 +771,6 @@ impl GpuContext {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: false,
-                    apply_limit_buckets: false,
                 })
                 .await
                 .map_err(|_| GpuError::NoAdapter)?;
