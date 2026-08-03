@@ -2,8 +2,6 @@
 
 A minimal, fast image viewer for Wayland, written in Rust.
 
-imgvwr is heavily inspired by [imv](https://sr.ht/~exec64/imv/) by Harry Jeffery — a great piece of software that set the bar for what a lightweight Wayland image viewer should feel like. imgvwr is **not** a port, fork, or direct descendant of imv. It is an independent reimplementation that shares the same spirit: stay small, stay fast, stay out of the way. It does not aim to replicate every feature imv has.
-
 ---
 
 ## Requirements
@@ -28,55 +26,13 @@ imgvwr is heavily inspired by [imv](https://sr.ht/~exec64/imv/) by Harry Jeffery
 
 **Build-time:**
 
-- Rust toolchain (edition 2024, stable)
+- Rust toolchain
 - `pkg-config`
 - Wayland protocol headers (`wayland-protocols`)
 
 ---
 
-## Building
-
-Clone the repository and build with Cargo:
-
-```sh
-git clone https://github.com/Gigas002/imgvwr
-cd imgvwr
-cargo build --release
-```
-
-The resulting binary is at `target/release/imgvwr`.
-
-### Selecting features
-
-By default only PNG support is compiled in. Enable additional formats and backends with `--features`:
-
-```sh
-# Common formats
-cargo build --release --features jpeg,webp,avif
-
-# Full format set
-cargo build --release --features jpeg,webp,avif,avif-anim,jxl,jxl-anim,gif,webp-anim,apng
-
-# GPU-accelerated rendering via Vulkan
-cargo build --release --features gpu-vulkan
-
-# GPU via OpenGL ES / EGL
-cargo build --release --features gpu-gles
-
-# DMA-BUF zero-copy (requires gpu-vulkan)
-cargo build --release --features dmabuf
-
-# Server-side window decorations
-cargo build --release --features decorations
-
-# Shell completions (bash, zsh, fish, nushell, elvish, powershell)
-cargo build --release --features completions
-
-# Everything
-cargo build --release --all-features
-```
-
-### Feature reference
+## Feature reference
 
 | Feature       | Default | Description                                      |
 | ------------- | ------- | ------------------------------------------------ |
@@ -130,8 +86,6 @@ imgvwr ~/pictures/**/*.webp
 | `--log-level <LEVEL>`              | Log level: `error`, `warn`, `info`, `debug`, `trace`                         |
 | `-h, --help`                       | Print help                                                                   |
 
-CLI options override config file values.
-
 ### Default keybindings
 
 | Key      | Action                                    |
@@ -143,29 +97,6 @@ CLI options override config file values.
 
 ---
 
-## Configuration
-
-imgvwr loads config in this order, with later sources overriding earlier ones:
-
-1. Built-in defaults
-2. System config: `/etc/imgvwr/config.toml`
-3. User config: `$XDG_CONFIG_HOME/imgvwr/config.toml` (falls back to `~/.config/imgvwr/config.toml`)
-4. `--config <PATH>` override (if provided)
-
-An example config with all options documented is in [`examples/config.toml`](examples/config.toml).
-
----
-
-## License
-
-AGPL-3.0-only. See [LICENSE](LICENSE.txt).
-
----
-
 ## Acknowledgements
-
-> Pre-1.0.0 history is preserved on the [`rust` branch of imv fork repo](https://github.com/Gigas002/imv/tree/rust).
-
-> The old [iced](https://github.com/iced-rs/iced)-powered tree lives on the [`iced` branch](https://github.com/Gigas002/imv/tree/iced).
 
 Thanks to **Harry Jeffery** for creating [imv](https://sr.ht/~exec64/imv/). It is the reference for what a minimal Wayland image viewer should be, and the direct inspiration for this project.
