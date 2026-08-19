@@ -64,6 +64,71 @@ pub fn load(path: &Path) -> Result<DynamicImage, LoadError> {
     })
 }
 
+/// A [`jxl::api::JxlParallelRunner`] that spreads work across all available
+/// CPU cores using a shared work-stealing counter.
+#[cfg(feature = "jxl")]
+struct JxlThreadPoolRunner {
+    max_threads: usize,
+}
+
+#[cfg(feature = "jxl")]
+impl Default for JxlThreadPoolRunner {
+    fn default() -> Self {
+        let max_threads = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1);
+        Self { max_threads }
+    }
+}
+
+#[cfg(feature = "jxl")]
+impl jxl::api::JxlParallelRunner for JxlThreadPoolRunner {
+    fn run(
+        &mut self,
+        num: usize,
+        fun: &jxl::api::JxlParallelRunnerFun<'_>,
+    ) -> jxl::error::Result<()> {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let num_threads = self.max_threads.min(num);
+        if num_threads <= 1 {
+            for i in 0..num {
+                fun(i)?;
+            }
+            return Ok(());
+        }
+
+        let next_task = AtomicUsize::new(0);
+        let error = Mutex::new(None);
+
+        std::thread::scope(|scope| {
+            for _ in 0..num_threads {
+                scope.spawn(|| {
+                    loop {
+                        if error.lock().unwrap().is_some() {
+                            break;
+                        }
+                        let task = next_task.fetch_add(1, Ordering::Relaxed);
+                        if task >= num {
+                            break;
+                        }
+                        if let Err(e) = fun(task) {
+                            error.lock().unwrap().get_or_insert(e);
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        match error.into_inner().unwrap() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+}
+
 #[cfg(feature = "jxl")]
 fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
     use image::{ImageBuffer, Rgba};
@@ -74,12 +139,16 @@ fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
 
     let file_bytes = std::fs::read(path).map_err(LoadError::Io)?;
     let options = JxlDecoderOptions::default();
+    let mut runner = JxlThreadPoolRunner::default();
 
     // Phase 1 — parse image header → get dimensions
     let mut decoder = JxlDecoder::<Initialized>::new(options);
     let mut input = file_bytes.as_slice();
     let mut decoder_info = loop {
-        match decoder.process(&mut input).map_err(jxl_err)? {
+        match decoder
+            .process(&mut input, Some(&mut runner))
+            .map_err(jxl_err)?
+        {
             ProcessingResult::Complete { result } => break result,
             ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
         }
@@ -96,7 +165,10 @@ fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
 
     // Phase 2 — parse frame header
     let mut decoder_frame = loop {
-        match decoder_info.process(&mut input).map_err(jxl_err)? {
+        match decoder_info
+            .process(&mut input, Some(&mut runner))
+            .map_err(jxl_err)?
+        {
             ProcessingResult::Complete { result } => break result,
             ProcessingResult::NeedsMoreInput { fallback, .. } => decoder_info = fallback,
         }
@@ -108,7 +180,7 @@ fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
     loop {
         let out = JxlOutputBuffer::new(&mut pixel_buf, height, stride);
         match decoder_frame
-            .process(&mut input, &mut [out])
+            .process(&mut input, &mut [out], Some(&mut runner))
             .map_err(jxl_err)?
         {
             ProcessingResult::Complete { .. } => break,
@@ -533,11 +605,15 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
 
     let file_bytes = std::fs::read(path).map_err(LoadError::Io)?;
     let options = JxlDecoderOptions::default();
+    let mut runner = JxlThreadPoolRunner::default();
 
     let mut decoder = JxlDecoder::<Initialized>::new(options);
     let mut input = file_bytes.as_slice();
     let mut decoder_info = loop {
-        match decoder.process(&mut input).map_err(jxl_err)? {
+        match decoder
+            .process(&mut input, Some(&mut runner))
+            .map_err(jxl_err)?
+        {
             ProcessingResult::Complete { result } => break result,
             ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
         }
@@ -564,7 +640,10 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
     loop {
         // Parse frame header: WithImageInfo → WithFrameInfo
         let mut decoder_frame = loop {
-            match decoder_info.process(&mut input).map_err(jxl_err)? {
+            match decoder_info
+                .process(&mut input, Some(&mut runner))
+                .map_err(jxl_err)?
+            {
                 ProcessingResult::Complete { result } => break result,
                 ProcessingResult::NeedsMoreInput { fallback, .. } => decoder_info = fallback,
             }
@@ -575,7 +654,7 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
         decoder_info = loop {
             let out = JxlOutputBuffer::new(&mut pixel_buf, height, stride);
             match decoder_frame
-                .process(&mut input, &mut [out])
+                .process(&mut input, &mut [out], Some(&mut runner))
                 .map_err(jxl_err)?
             {
                 ProcessingResult::Complete { result } => break result,
