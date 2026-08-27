@@ -420,7 +420,7 @@ pub(crate) fn readback(ctx: &GpuContext, tex: &wgpu::Texture, w: u32, h: u32) ->
     for row in 0..h {
         let start = (row * padded_row) as usize;
         let row_data = &raw[start..start + row_bytes as usize];
-        for chunk in row_data.chunks_exact(4) {
+        for chunk in row_data.as_chunks::<4>().0 {
             // RGBA → little-endian ARGB8888: [B, G, R, A]
             out.push(chunk[2]);
             out.push(chunk[1]);

@@ -389,7 +389,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         wayland.dispatch(16)?;
 
-        let events: Vec<InputEvent> = wayland.state.pending_events.drain(..).collect();
+        let events: Vec<InputEvent> = std::mem::take(&mut wayland.state.pending_events);
         let mut dirty = wayland.state.needs_redraw;
         wayland.state.needs_redraw = false;
         let mut any_navigated = false;
