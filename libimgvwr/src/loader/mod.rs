@@ -83,6 +83,10 @@ impl Default for JxlThreadPoolRunner {
 
 #[cfg(feature = "jxl")]
 impl jxl::api::JxlParallelRunner for JxlThreadPoolRunner {
+    fn num_threads(&self) -> usize {
+        self.max_threads
+    }
+
     fn run(
         &mut self,
         num: usize,
@@ -157,11 +161,13 @@ fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
     let (width, height) = decoder_info.basic_info().size;
     let num_extra = decoder_info.basic_info().extra_channels.len();
     use jxl::api::{JxlColorType, JxlDataFormat};
-    decoder_info.set_pixel_format(JxlPixelFormat {
-        color_type: JxlColorType::Rgba,
-        color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-        extra_channel_format: vec![None; num_extra],
-    });
+    decoder_info
+        .set_pixel_format(JxlPixelFormat {
+            color_type: JxlColorType::Rgba,
+            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+            extra_channel_format: vec![None; num_extra],
+        })
+        .map_err(jxl_err)?;
 
     // Phase 2 — parse frame header
     let mut decoder_frame = loop {
@@ -633,7 +639,7 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
         color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
         extra_channel_format: vec![None; num_extra],
     };
-    decoder_info.set_pixel_format(fmt);
+    decoder_info.set_pixel_format(fmt).map_err(jxl_err)?;
     let stride = width * 4;
     let mut frames = Vec::new();
 
