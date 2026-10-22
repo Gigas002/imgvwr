@@ -133,64 +133,75 @@ impl jxl::api::JxlParallelRunner for JxlThreadPoolRunner {
     }
 }
 
+/// Drive `decoder` until it emits an event other than `NeedMoreInput`.
+///
+/// The whole file is supplied up front, so a `NeedMoreInput` that consumes no
+/// further bytes means the file is truncated.
+#[cfg(feature = "jxl")]
+fn jxl_next_event(
+    decoder: &mut jxl::api::JxlDecoder,
+    input: &mut &[u8],
+    mut buffers: Option<&mut [jxl::api::JxlOutputBuffer<'_>]>,
+    runner: &mut JxlThreadPoolRunner,
+) -> Result<jxl::api::Event, LoadError> {
+    use jxl::api::Event;
+
+    loop {
+        let remaining = input.len();
+        match decoder
+            .process(input, buffers.as_deref_mut(), Some(runner))
+            .map_err(jxl_err)?
+        {
+            Event::NeedMoreInput { .. } if input.is_empty() || input.len() == remaining => {
+                return Err(jxl_err(jxl::error::Error::OutOfBounds(0)));
+            }
+            Event::NeedMoreInput { .. } => {}
+            event => return Ok(event),
+        }
+    }
+}
+
 #[cfg(feature = "jxl")]
 fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
     use image::{ImageBuffer, Rgba};
-    use jxl::api::states::Initialized;
-    use jxl::api::{
-        JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat, ProcessingResult,
-    };
+    use jxl::api::{Event, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat};
 
     let file_bytes = std::fs::read(path).map_err(LoadError::Io)?;
-    let options = JxlDecoderOptions::default();
     let mut runner = JxlThreadPoolRunner::default();
+    let mut decoder = JxlDecoder::new(JxlDecoderOptions::default());
+    let mut input = file_bytes.as_slice();
 
     // Phase 1 — parse image header → get dimensions
-    let mut decoder = JxlDecoder::<Initialized>::new(options);
-    let mut input = file_bytes.as_slice();
-    let mut decoder_info = loop {
-        match decoder
-            .process(&mut input, Some(&mut runner))
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
-        }
-    };
+    while !matches!(
+        jxl_next_event(&mut decoder, &mut input, None, &mut runner)?,
+        Event::BasicInfo
+    ) {}
 
-    let (width, height) = decoder_info.basic_info().size;
-    let num_extra = decoder_info.basic_info().extra_channels.len();
-    use jxl::api::{JxlColorType, JxlDataFormat};
-    decoder_info
-        .set_pixel_format(JxlPixelFormat {
-            color_type: JxlColorType::Rgba,
-            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-            extra_channel_format: vec![None; num_extra],
-        })
+    let basic_info = decoder.basic_info().ok_or(LoadError::UnsupportedFormat)?;
+    let (width, height) = basic_info.size;
+    let num_extra = basic_info.extra_channels.len();
+    decoder
+        .set_pixel_format(JxlPixelFormat::rgba8(num_extra))
         .map_err(jxl_err)?;
 
     // Phase 2 — parse frame header
-    let mut decoder_frame = loop {
-        match decoder_info
-            .process(&mut input, Some(&mut runner))
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder_info = fallback,
+    loop {
+        match jxl_next_event(&mut decoder, &mut input, None, &mut runner)? {
+            Event::FrameHeader => break,
+            Event::Complete => return Err(LoadError::UnsupportedFormat),
+            _ => {}
         }
-    };
+    }
 
     // Phase 3 — decode first frame into an RGBA u8 buffer
     let stride = width * 4;
     let mut pixel_buf = vec![0u8; height * stride];
     loop {
-        let out = JxlOutputBuffer::new(&mut pixel_buf, height, stride);
-        match decoder_frame
-            .process(&mut input, &mut [out], Some(&mut runner))
-            .map_err(jxl_err)?
+        let mut out = [JxlOutputBuffer::new(&mut pixel_buf, height, stride)];
+        if let Event::FrameComplete { .. } =
+            jxl_next_event(&mut decoder, &mut input, Some(&mut out), &mut runner)?
         {
-            ProcessingResult::Complete { .. } => break,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder_frame = fallback,
+            break;
         }
     }
 
@@ -604,76 +615,57 @@ fn avif_anim_decode_err(msg: String) -> LoadError {
 #[cfg(feature = "jxl-anim")]
 pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
     use image::{ImageBuffer, Rgba};
-    use jxl::api::states::Initialized;
-    use jxl::api::{
-        JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat, ProcessingResult,
-    };
+    use jxl::api::{Event, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat};
 
     let file_bytes = std::fs::read(path).map_err(LoadError::Io)?;
-    let options = JxlDecoderOptions::default();
     let mut runner = JxlThreadPoolRunner::default();
-
-    let mut decoder = JxlDecoder::<Initialized>::new(options);
+    let mut decoder = JxlDecoder::new(JxlDecoderOptions::default());
     let mut input = file_bytes.as_slice();
-    let mut decoder_info = loop {
-        match decoder
-            .process(&mut input, Some(&mut runner))
-            .map_err(jxl_err)?
-        {
-            ProcessingResult::Complete { result } => break result,
-            ProcessingResult::NeedsMoreInput { fallback, .. } => decoder = fallback,
-        }
-    };
 
-    if decoder_info.basic_info().animation.is_none() {
+    while !matches!(
+        jxl_next_event(&mut decoder, &mut input, None, &mut runner)?,
+        Event::BasicInfo
+    ) {}
+
+    let basic_info = decoder.basic_info().ok_or(LoadError::UnsupportedFormat)?;
+    if basic_info.animation.is_none() {
         return Err(LoadError::UnsupportedFormat);
     }
 
-    let (width, height) = decoder_info.basic_info().size;
+    let (width, height) = basic_info.size;
     // Fold all extra channels (e.g. separate alpha) into the RGBA output by
     // marking them as None (no separate buffer).
-    let num_extra = decoder_info.basic_info().extra_channels.len();
-    use jxl::api::{JxlColorType, JxlDataFormat};
-    let fmt = JxlPixelFormat {
-        color_type: JxlColorType::Rgba,
-        color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-        extra_channel_format: vec![None; num_extra],
-    };
-    decoder_info.set_pixel_format(fmt).map_err(jxl_err)?;
+    let num_extra = basic_info.extra_channels.len();
+    decoder
+        .set_pixel_format(JxlPixelFormat::rgba8(num_extra))
+        .map_err(jxl_err)?;
     let stride = width * 4;
     let mut frames = Vec::new();
 
     loop {
-        // Parse frame header: WithImageInfo → WithFrameInfo
-        let mut decoder_frame = loop {
-            match decoder_info
-                .process(&mut input, Some(&mut runner))
-                .map_err(jxl_err)?
-            {
-                ProcessingResult::Complete { result } => break result,
-                ProcessingResult::NeedsMoreInput { fallback, .. } => decoder_info = fallback,
-            }
-        };
+        // Parse frame header
+        match jxl_next_event(&mut decoder, &mut input, None, &mut runner)? {
+            Event::FrameHeader => {}
+            Event::Complete => break,
+            _ => continue,
+        }
 
-        // Decode pixels: WithFrameInfo → WithImageInfo
-        let mut pixel_buf = vec![0u8; height * stride];
-        decoder_info = loop {
-            let out = JxlOutputBuffer::new(&mut pixel_buf, height, stride);
-            match decoder_frame
-                .process(&mut input, &mut [out], Some(&mut runner))
-                .map_err(jxl_err)?
-            {
-                ProcessingResult::Complete { result } => break result,
-                ProcessingResult::NeedsMoreInput { fallback, .. } => decoder_frame = fallback,
-            }
-        };
-
-        let duration_ms = decoder_info
-            .scanned_frames()
-            .last()
-            .map(|f| f.duration_ms)
+        let duration_ms = decoder
+            .frame_header()
+            .and_then(|h| h.duration)
             .unwrap_or(100.0);
         let duration = Duration::from_millis((duration_ms.max(10.0)) as u64);
+
+        // Decode pixels
+        let mut pixel_buf = vec![0u8; height * stride];
+        let has_more_frames = loop {
+            let mut out = [JxlOutputBuffer::new(&mut pixel_buf, height, stride)];
+            if let Event::FrameComplete { has_more_frames } =
+                jxl_next_event(&mut decoder, &mut input, Some(&mut out), &mut runner)?
+            {
+                break has_more_frames;
+            }
+        };
 
         let img = ImageBuffer::<Rgba<u8>, _>::from_raw(width as u32, height as u32, pixel_buf)
             .map(DynamicImage::ImageRgba8)
@@ -681,7 +673,7 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
 
         frames.push((img, duration));
 
-        if !decoder_info.has_more_frames() {
+        if !has_more_frames {
             break;
         }
     }
