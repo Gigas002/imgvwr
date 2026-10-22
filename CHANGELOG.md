@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### libimgvwr
+
+#### Changed
+
+- migrated GPU renderer from hand-written wgpu shaders to [vello](https://github.com/linebender/vello) ([@Gigas002](https://github.com/Gigas002))
+
 ## [1.1.0] - 2026-09-04
 
 ### libimgvwr
