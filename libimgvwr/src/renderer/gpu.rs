@@ -1,18 +1,44 @@
-// GPU-accelerated rendering pipeline via wgpu (Vulkan preferred, GL/EGL fallback).
-// Compiled only when `gpu-vulkan` or `gpu-gles` feature is enabled.
+// GPU-accelerated rendering pipeline via vello on top of wgpu (Vulkan
+// preferred, GL/EGL fallback). Compiled only when `gpu-vulkan` or `gpu-gles`
+// feature is enabled.
 //
-// All render pipelines and bind group layouts are compiled once at GpuContext
-// initialisation; per-frame work is limited to texture upload, uniform buffer
-// writes, bind group creation, and draw calls.
+// Each frame builds a vello `Scene` containing a single image fill whose
+// affine transform encodes scale, rotation and pan. vello rasterises the scene
+// into an `Rgba8Unorm` storage texture, which is either read back for the SHM
+// path or blitted onto the swapchain for the dmabuf path.
+//
+// vello samples images with at most bicubic filtering and without mipmaps, so
+// strong minification would alias. To avoid that, the source is kept as a
+// chain of pre-filtered half-size levels (built once per image with the
+// configured filter on the CPU) and the level closest to the target scale is
+// handed to vello. Levels that exceed vello's image atlas are cropped to the
+// visible region every frame instead.
+
+use std::sync::Arc;
+
+use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage, imageops};
+use vello::kurbo::{Affine, Point, Rect};
+use vello::peniko::{
+    Blob, Color, ImageAlphaType, ImageBrush, ImageData, ImageFormat, ImageQuality,
+};
+use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
 
 use super::FilterMethod;
-use image::DynamicImage;
+use crate::viewport::ViewportState;
+
+/// Largest image side vello can place in its image atlas.
+pub(crate) const MAX_ATLAS_SIDE: u32 = 8192;
+
+/// Extra source pixels kept around a visible crop so filter taps at the
+/// window edge read real neighbours instead of clamped edge pixels.
+const CROP_MARGIN: f64 = 2.0;
 
 /// Errors produced during GPU initialisation.
 #[derive(Debug)]
 pub enum GpuError {
     NoAdapter,
     DeviceError(wgpu::RequestDeviceError),
+    Renderer(vello::Error),
 }
 
 impl std::fmt::Display for GpuError {
@@ -20,6 +46,7 @@ impl std::fmt::Display for GpuError {
         match self {
             GpuError::NoAdapter => write!(f, "no suitable GPU adapter found"),
             GpuError::DeviceError(e) => write!(f, "GPU device error: {e}"),
+            GpuError::Renderer(e) => write!(f, "vello renderer error: {e}"),
         }
     }
 }
@@ -32,196 +59,238 @@ impl From<wgpu::RequestDeviceError> for GpuError {
     }
 }
 
-// ─── Pipeline cache ──────────────────────────────────────────────────────────
-
-/// All render pipelines compiled once at init.
-///
-/// Two bind group layout shapes are used:
-/// - `sampler_bgl`:  binding 0 = texture (filterable float), binding 1 = sampler
-/// - `uniform_bgl`:  binding 0 = texture (non-filterable float), binding 1 = uniform buffer
-pub(crate) struct GpuPipelines {
-    pub sampler_bgl: wgpu::BindGroupLayout,
-    pub uniform_bgl: wgpu::BindGroupLayout,
-
-    pub blit: wgpu::RenderPipeline, // blit.wgsl         → Rgba8Unorm
-    pub lanczos3_h: wgpu::RenderPipeline, // lanczos3 horiz     → Rgba16Float
-    pub lanczos3_v: wgpu::RenderPipeline, // lanczos3 vert      → Rgba8Unorm
-    pub catmull_h: wgpu::RenderPipeline, // catmull_rom horiz  → Rgba16Float
-    pub catmull_v: wgpu::RenderPipeline, // catmull_rom vert   → Rgba8Unorm
-    pub rotate: wgpu::RenderPipeline, // rotate.wgsl        → Rgba8Unorm
+impl From<vello::Error> for GpuError {
+    fn from(e: vello::Error) -> Self {
+        GpuError::Renderer(e)
+    }
 }
 
-impl GpuPipelines {
-    fn new(device: &wgpu::Device) -> Self {
-        let sampler_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sampler_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+// ─── Geometry ────────────────────────────────────────────────────────────────
 
-        let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("uniform_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+/// Map a [`FilterMethod`] onto vello's image sampling quality.
+pub(crate) fn image_quality(filter: FilterMethod) -> ImageQuality {
+    match filter {
+        FilterMethod::Nearest => ImageQuality::Low,
+        FilterMethod::Triangle | FilterMethod::Gaussian => ImageQuality::Medium,
+        FilterMethod::CatmullRom | FilterMethod::Lanczos3 => ImageQuality::High,
+    }
+}
 
-        let blit = make_pipeline(
-            device,
-            &sampler_bgl,
-            include_str!("shaders/blit.wgsl"),
-            "vs_main",
-            "fs_main",
-            wgpu::TextureFormat::Rgba8Unorm,
-        );
-        let lanczos3_h = make_pipeline(
-            device,
-            &uniform_bgl,
-            include_str!("shaders/lanczos3.wgsl"),
-            "vs_main",
-            "fs_horizontal",
-            wgpu::TextureFormat::Rgba16Float,
-        );
-        let lanczos3_v = make_pipeline(
-            device,
-            &uniform_bgl,
-            include_str!("shaders/lanczos3.wgsl"),
-            "vs_main",
-            "fs_vertical",
-            wgpu::TextureFormat::Rgba8Unorm,
-        );
-        let catmull_h = make_pipeline(
-            device,
-            &uniform_bgl,
-            include_str!("shaders/catmull_rom.wgsl"),
-            "vs_main",
-            "fs_horizontal",
-            wgpu::TextureFormat::Rgba16Float,
-        );
-        let catmull_v = make_pipeline(
-            device,
-            &uniform_bgl,
-            include_str!("shaders/catmull_rom.wgsl"),
-            "vs_main",
-            "fs_vertical",
-            wgpu::TextureFormat::Rgba8Unorm,
-        );
-        let rotate = make_pipeline(
-            device,
-            &uniform_bgl,
-            include_str!("shaders/rotate.wgsl"),
-            "vs_main",
-            "fs_main",
-            wgpu::TextureFormat::Rgba8Unorm,
-        );
+/// Pick the pre-scaled level for `scale`: the smallest level that is still at
+/// least as large as the on-screen image, so vello only ever minifies by less
+/// than 2×. Level `n` is the source halved `n` times.
+pub(crate) fn mip_level_for_scale(scale: f32) -> u32 {
+    if scale >= 1.0 || scale <= 0.0 {
+        return 0;
+    }
+    (1.0 / scale as f64).log2().floor() as u32
+}
 
+/// Dimensions of level `n` for a `width × height` source.
+pub(crate) fn level_size(width: u32, height: u32, level: u32) -> (u32, u32) {
+    let shrink = |v: u32| (v >> level.min(31)).max(1);
+    (shrink(width), shrink(height))
+}
+
+/// Transform from source-image pixel space to window pixel space.
+///
+/// The image is scaled by `viewport.scale`, rotated clockwise by
+/// `viewport.rotation` about its centre, centred in the window and shifted by
+/// `viewport.offset`. The top-left corner of the rotated image is snapped to
+/// the pixel grid so that 1:1 views stay sharp.
+pub(crate) fn image_transform(
+    src_w: u32,
+    src_h: u32,
+    viewport: &ViewportState,
+    dst_w: u32,
+    dst_h: u32,
+) -> Affine {
+    let scale = viewport.scale as f64;
+    let (w, h) = (src_w as f64 * scale, src_h as f64 * scale);
+    let (rot_w, rot_h) = match viewport.rotation % 360 {
+        90 | 270 => (h, w),
+        _ => (w, h),
+    };
+    let left = (dst_w as f64 / 2.0 + viewport.offset.0 as f64 - rot_w / 2.0).round();
+    let top = (dst_h as f64 / 2.0 + viewport.offset.1 as f64 - rot_h / 2.0).round();
+
+    Affine::translate((left + rot_w / 2.0, top + rot_h / 2.0))
+        * Affine::rotate((viewport.rotation as f64).to_radians())
+        * Affine::scale(scale)
+        * Affine::translate((-(src_w as f64) / 2.0, -(src_h as f64) / 2.0))
+}
+
+/// Integer pixel rectangle `(x, y, w, h)` inside an image.
+pub(crate) type CropRect = (u32, u32, u32, u32);
+
+/// Region of an `img_w × img_h` image that lands inside the `dst_w × dst_h`
+/// window under `transform`, padded by [`CROP_MARGIN`].
+///
+/// Returns `None` when the image is entirely off-screen.
+pub(crate) fn visible_crop(
+    transform: Affine,
+    img_w: u32,
+    img_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Option<CropRect> {
+    let inv = transform.inverse();
+    let corners = [
+        Point::new(0.0, 0.0),
+        Point::new(dst_w as f64, 0.0),
+        Point::new(0.0, dst_h as f64),
+        Point::new(dst_w as f64, dst_h as f64),
+    ]
+    .map(|p| inv * p);
+    let bounds = corners
+        .iter()
+        .skip(1)
+        .fold(Rect::from_points(corners[0], corners[0]), |r, &p| {
+            r.union_pt(p)
+        })
+        .inflate(CROP_MARGIN, CROP_MARGIN)
+        .intersect(Rect::new(0.0, 0.0, img_w as f64, img_h as f64));
+
+    let x0 = bounds.x0.floor().max(0.0) as u32;
+    let y0 = bounds.y0.floor().max(0.0) as u32;
+    let x1 = (bounds.x1.ceil() as u32).min(img_w);
+    let y1 = (bounds.y1.ceil() as u32).min(img_h);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some((x0, y0, x1 - x0, y1 - y0))
+}
+
+// ─── Source cache ────────────────────────────────────────────────────────────
+
+/// Identity of the source image a [`SourceCache`] was built from.
+///
+/// Images are recognised by the address and size of their pixel buffer: the
+/// caller keeps the displayed image alive until its successor is loaded, so a
+/// new image can never reuse the cached one's buffer. Mutating an image in
+/// place between frames is not detected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceKey {
+    ptr: usize,
+    len: usize,
+    width: u32,
+    height: u32,
+    filter: FilterMethod,
+}
+
+impl SourceKey {
+    fn new(src: &DynamicImage, filter: FilterMethod) -> Self {
+        let bytes = src.as_bytes();
         Self {
-            sampler_bgl,
-            uniform_bgl,
-            blit,
-            lanczos3_h,
-            lanczos3_v,
-            catmull_h,
-            catmull_v,
-            rotate,
+            ptr: bytes.as_ptr() as usize,
+            len: bytes.len(),
+            width: src.width(),
+            height: src.height(),
+            filter,
         }
     }
 }
 
-fn make_pipeline(
-    device: &wgpu::Device,
-    bgl: &wgpu::BindGroupLayout,
-    shader_src: &str,
-    vs_entry: &str,
-    fs_entry: &str,
-    out_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::Wgsl(shader_src.into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[Some(bgl)],
-        immediate_size: 0,
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some(vs_entry),
-            buffers: &[],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some(fs_entry),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: out_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            strip_index_format: None,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
+/// Pre-scaled RGBA8 copies of the current source image.
+///
+/// Level 0 is the full-resolution image; each further level halves both sides
+/// using the configured filter. Levels are built lazily and live as vello
+/// [`ImageData`] so that unchanged levels are uploaded to the atlas only once.
+#[derive(Default)]
+struct SourceCache {
+    key: Option<SourceKey>,
+    levels: Vec<ImageData>,
+    /// Last visible crop handed to vello, reused while the view is unchanged.
+    crop: Option<(u32, CropRect, ImageData)>,
+}
+
+impl SourceCache {
+    fn prepare(&mut self, src: &DynamicImage, filter: FilterMethod) {
+        let key = SourceKey::new(src, filter);
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        self.levels = vec![rgba_image_data(src.to_rgba8())];
+        self.crop = None;
+    }
+
+    fn level(&mut self, level: u32, filter: FilterMethod) -> &ImageData {
+        while self.levels.len() <= level as usize {
+            let prev = self.levels.last().expect("level 0 is always present");
+            let (w, h) = (
+                prev.width.div_ceil(2).max(1),
+                prev.height.div_ceil(2).max(1),
+            );
+            let next = imageops::resize(&image_view(prev), w, h, filter.into());
+            self.levels.push(rgba_image_data(next));
+        }
+        &self.levels[level as usize]
+    }
+
+    fn crop(&mut self, level: u32, rect: CropRect) -> &ImageData {
+        let fresh = matches!(&self.crop, Some((l, r, _)) if *l == level && *r == rect);
+        if !fresh {
+            let cropped = crop_rgba(&self.levels[level as usize], rect);
+            self.crop = Some((level, rect, rgba_image_data(cropped)));
+        }
+        &self.crop.as_ref().expect("crop was just set").2
+    }
+}
+
+fn rgba_image_data(img: RgbaImage) -> ImageData {
+    let (width, height) = img.dimensions();
+    ImageData {
+        data: Blob::new(Arc::new(img.into_raw())),
+        format: ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::Alpha,
+        width,
+        height,
+    }
+}
+
+/// Copy the `rect` region out of RGBA8 `data`.
+fn crop_rgba(data: &ImageData, (x, y, w, h): CropRect) -> RgbaImage {
+    let stride = data.width as usize * 4;
+    let bytes = data.data.data();
+    let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+    for row in y..y + h {
+        let start = row as usize * stride + x as usize * 4;
+        out.extend_from_slice(&bytes[start..start + w as usize * 4]);
+    }
+    RgbaImage::from_raw(w, h, out).expect("crop buffer matches its dimensions")
+}
+
+fn image_view(data: &ImageData) -> ImageBuffer<Rgba<u8>, &[u8]> {
+    ImageBuffer::from_raw(data.width, data.height, data.data.data())
+        .expect("image data matches its dimensions")
 }
 
 // ─── GpuContext ───────────────────────────────────────────────────────────────
 
-/// Owns the wgpu device, queue, and all compiled pipelines for the lifetime
-/// of the application.
+/// Owns the wgpu device and queue, the vello renderer, and all per-image
+/// caches for the lifetime of the application.
 pub struct GpuContext {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
-    pub(crate) pipelines: GpuPipelines,
+    renderer: Renderer,
+    scene: Scene,
+    source: SourceCache,
+    /// vello render target, recreated whenever the window size changes.
+    target: Option<wgpu::Texture>,
     /// Present swapchain state. `None` when running the SHM/readback path.
     #[cfg(feature = "dmabuf")]
     pub(crate) swapchain: Option<SwapchainState>,
+}
+
+fn create_renderer(device: &wgpu::Device) -> Result<Renderer, GpuError> {
+    Ok(Renderer::new(
+        device,
+        RendererOptions {
+            antialiasing_support: AaSupport::area_only(),
+            ..Default::default()
+        },
+    )?)
 }
 
 impl GpuContext {
@@ -265,122 +334,170 @@ impl GpuContext {
                 .request_device(&wgpu::DeviceDescriptor::default())
                 .await?;
 
-            let pipelines = GpuPipelines::new(&device);
+            let renderer = create_renderer(&device)?;
             Ok(Self {
                 device,
                 queue,
-                pipelines,
+                renderer,
+                scene: Scene::new(),
+                source: SourceCache::default(),
+                target: None,
                 #[cfg(feature = "dmabuf")]
                 swapchain: None,
             })
         })
     }
-}
 
-// ─── Per-frame GPU operations ─────────────────────────────────────────────────
+    /// Render `src` for `viewport` into a `dst_w × dst_h` `Rgba8Unorm` texture
+    /// owned by this context. Pixels not covered by the image are filled with
+    /// `background`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render_to_target(
+        &mut self,
+        src: &DynamicImage,
+        viewport: &ViewportState,
+        dst_w: u32,
+        dst_h: u32,
+        filter: FilterMethod,
+        background: Color,
+    ) -> Result<(), vello::Error> {
+        self.build_scene(src, viewport, dst_w, dst_h, filter);
 
-/// Upload a [`DynamicImage`] to a GPU texture (`Rgba8Unorm`).
-pub(crate) fn upload_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    img: &DynamicImage,
-) -> wgpu::Texture {
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
+        let stale = self
+            .target
+            .as_ref()
+            .is_none_or(|t| t.width() != dst_w || t.height() != dst_h);
+        if stale {
+            self.target = Some(make_target(&self.device, dst_w, dst_h));
+        }
+        let target = self.target.as_ref().expect("target was just created");
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let texture = make_texture(
-        device,
-        width,
-        height,
-        wgpu::TextureFormat::Rgba8Unorm,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
+        self.renderer.render_to_texture(
+            &self.device,
+            &self.queue,
+            &self.scene,
+            &view,
+            &RenderParams {
+                base_color: background,
+                width: dst_w,
+                height: dst_h,
+                antialiasing_method: AaConfig::Area,
+            },
+        )
+    }
 
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        rgba.as_raw(),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
+    /// Read the last rendered frame back as Wayland ARGB8888 bytes.
+    pub(crate) fn read_target(&self) -> Vec<u8> {
+        let target = self.target.as_ref().expect("render_to_target ran first");
+        readback(
+            &self.device,
+            &self.queue,
+            target,
+            target.width(),
+            target.height(),
+        )
+    }
 
-    texture
-}
+    /// Encode the image draw for this frame into `self.scene`.
+    fn build_scene(
+        &mut self,
+        src: &DynamicImage,
+        viewport: &ViewportState,
+        dst_w: u32,
+        dst_h: u32,
+        filter: FilterMethod,
+    ) {
+        self.scene.reset();
+        self.source.prepare(src, filter);
 
-/// Resize `src` to `(dst_w, dst_h)` then optionally rotate by `rotation` degrees.
-///
-/// `rotation` must be a multiple of 90; any other value is treated as 0.
-/// Dispatches resize to the appropriate GPU path:
-/// - `Lanczos3` / `CatmullRom` → two-pass separable kernel
-/// - All others → sampler-based blit (nearest or bilinear)
-pub(crate) fn resize_blit(
-    ctx: &GpuContext,
-    src: &wgpu::Texture,
-    dst_w: u32,
-    dst_h: u32,
-    filter: FilterMethod,
-    rotation: u16,
-) -> wgpu::Texture {
-    let resized = match filter {
-        FilterMethod::Lanczos3 => resize_kernel_two_pass(
-            ctx,
-            src,
-            dst_w,
-            dst_h,
-            &ctx.pipelines.lanczos3_h,
-            &ctx.pipelines.lanczos3_v,
-        ),
-        FilterMethod::CatmullRom => resize_kernel_two_pass(
-            ctx,
-            src,
-            dst_w,
-            dst_h,
-            &ctx.pipelines.catmull_h,
-            &ctx.pipelines.catmull_v,
-        ),
-        _ => resize_sampler(ctx, src, dst_w, dst_h, filter),
-    };
+        let to_window = image_transform(src.width(), src.height(), viewport, dst_w, dst_h);
+        let mut level = mip_level_for_scale(viewport.scale);
 
-    if rotation.is_multiple_of(360) {
-        resized
-    } else {
-        rotate_texture(ctx, &resized, rotation)
+        loop {
+            let (lw, lh) = level_size(src.width(), src.height(), level);
+            // Level pixels → source pixels → window pixels.
+            let to_window = to_window
+                * Affine::scale_non_uniform(
+                    src.width() as f64 / lw as f64,
+                    src.height() as f64 / lh as f64,
+                );
+
+            let fits_atlas = lw <= MAX_ATLAS_SIDE && lh <= MAX_ATLAS_SIDE;
+            let image = self.source.level(level, filter);
+            debug_assert_eq!((image.width, image.height), (lw, lh));
+
+            let (image, transform) = if fits_atlas {
+                (image, to_window)
+            } else {
+                let Some(rect) = visible_crop(to_window, lw, lh, dst_w, dst_h) else {
+                    return;
+                };
+                if rect.2 > MAX_ATLAS_SIDE || rect.3 > MAX_ATLAS_SIDE {
+                    // Even the visible part is too big: fall back to a smaller level.
+                    level += 1;
+                    continue;
+                }
+                let crop = self.source.crop(level, rect);
+                (
+                    crop,
+                    to_window * Affine::translate((rect.0 as f64, rect.1 as f64)),
+                )
+            };
+
+            let brush = ImageBrush::new(image.clone()).with_quality(image_quality(filter));
+            self.scene.draw_image(&brush, transform);
+            return;
+        }
     }
 }
+
+fn make_target(device: &wgpu::Device, w: u32, h: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("vello_target"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+// ─── Readback ────────────────────────────────────────────────────────────────
 
 /// Read back a GPU texture as a Wayland-compatible ARGB8888 byte buffer.
 ///
 /// Copies `tex` into a CPU-visible staging buffer, maps it synchronously,
 /// strips wgpu's row-alignment padding, and byte-swaps RGBA → `[B, G, R, A]`
 /// (little-endian ARGB8888, matching `wl_shm::Format::Argb8888`).
-pub(crate) fn readback(ctx: &GpuContext, tex: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
+fn readback(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    tex: &wgpu::Texture,
+    w: u32,
+    h: u32,
+) -> Vec<u8> {
     const ALIGN: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let row_bytes = w * 4;
     let padded_row = row_bytes.div_ceil(ALIGN) * ALIGN;
     let buf_size = (padded_row * h) as u64;
 
-    let staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: buf_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
 
-    let mut encoder = ctx
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: tex,
@@ -402,12 +519,12 @@ pub(crate) fn readback(ctx: &GpuContext, tex: &wgpu::Texture, w: u32, h: u32) ->
             depth_or_array_layers: 1,
         },
     );
-    ctx.queue.submit(std::iter::once(encoder.finish()));
+    queue.submit(std::iter::once(encoder.finish()));
 
     let (sender, receiver) = std::sync::mpsc::channel();
     let slice = staging.slice(..);
     slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-    ctx.device
+    device
         .poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
@@ -433,264 +550,6 @@ pub(crate) fn readback(ctx: &GpuContext, tex: &wgpu::Texture, w: u32, h: u32) ->
     out
 }
 
-/// Rotate `src` by `rotation` degrees (must be 90, 180, or 270; others → identity).
-///
-/// For 90° and 270° the output texture dimensions are swapped relative to `src`.
-/// Uses a pixel-exact `textureLoad` shader — no sampler blur.
-pub(crate) fn rotate_texture(
-    ctx: &GpuContext,
-    src: &wgpu::Texture,
-    rotation: u16,
-) -> wgpu::Texture {
-    let src_w = src.width();
-    let src_h = src.height();
-
-    let rot_code = match rotation % 360 {
-        90 => 1u32,
-        180 => 2u32,
-        270 => 3u32,
-        _ => 0u32,
-    };
-    let (out_w, out_h) = if rot_code == 1 || rot_code == 3 {
-        (src_h, src_w)
-    } else {
-        (src_w, src_h)
-    };
-
-    let dst = make_texture(
-        &ctx.device,
-        out_w,
-        out_h,
-        wgpu::TextureFormat::Rgba8Unorm,
-        wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::TEXTURE_BINDING,
-    );
-
-    let mut ub = [0u8; 16];
-    ub[0..4].copy_from_slice(&src_w.to_ne_bytes());
-    ub[4..8].copy_from_slice(&src_h.to_ne_bytes());
-    ub[8..12].copy_from_slice(&rot_code.to_ne_bytes());
-
-    let bind_group = uniform_bind_group(ctx, src, &ub);
-    let dst_view = dst.create_view(&wgpu::TextureViewDescriptor::default());
-    draw_fullscreen(ctx, &ctx.pipelines.rotate, &bind_group, &dst_view);
-    dst
-}
-
-// ─── Internal helpers ─────────────────────────────────────────────────────────
-
-fn resize_sampler(
-    ctx: &GpuContext,
-    src: &wgpu::Texture,
-    dst_w: u32,
-    dst_h: u32,
-    filter: FilterMethod,
-) -> wgpu::Texture {
-    let filter_mode = match filter {
-        FilterMethod::Nearest => wgpu::FilterMode::Nearest,
-        _ => wgpu::FilterMode::Linear,
-    };
-
-    let dst = make_texture(
-        &ctx.device,
-        dst_w,
-        dst_h,
-        wgpu::TextureFormat::Rgba8Unorm,
-        wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::TEXTURE_BINDING,
-    );
-
-    let sampler = ctx.device.create_sampler(&wgpu::SamplerDescriptor {
-        mag_filter: filter_mode,
-        min_filter: filter_mode,
-        ..Default::default()
-    });
-    let src_view = src.create_view(&wgpu::TextureViewDescriptor::default());
-    let dst_view = dst.create_view(&wgpu::TextureViewDescriptor::default());
-
-    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &ctx.pipelines.sampler_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&src_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-    });
-
-    draw_fullscreen(ctx, &ctx.pipelines.blit, &bind_group, &dst_view);
-    dst
-}
-
-/// Two-pass separable kernel resize using pre-compiled pipelines.
-///
-/// Pass 1: `(src_w, src_h)` → `(dst_w, src_h)` in `Rgba16Float`.
-/// Pass 2: `(dst_w, src_h)` → `(dst_w, dst_h)` in `Rgba8Unorm`.
-fn resize_kernel_two_pass(
-    ctx: &GpuContext,
-    src: &wgpu::Texture,
-    dst_w: u32,
-    dst_h: u32,
-    h_pipeline: &wgpu::RenderPipeline,
-    v_pipeline: &wgpu::RenderPipeline,
-) -> wgpu::Texture {
-    let src_w = src.width();
-    let src_h = src.height();
-
-    let intermediate = run_kernel_pass(
-        ctx,
-        src,
-        src_w,
-        src_h,
-        dst_w,
-        src_h,
-        wgpu::TextureFormat::Rgba16Float,
-        h_pipeline,
-    );
-    run_kernel_pass(
-        ctx,
-        &intermediate,
-        dst_w,
-        src_h,
-        dst_w,
-        dst_h,
-        wgpu::TextureFormat::Rgba8Unorm,
-        v_pipeline,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_kernel_pass(
-    ctx: &GpuContext,
-    src: &wgpu::Texture,
-    src_w: u32,
-    src_h: u32,
-    dst_w: u32,
-    dst_h: u32,
-    out_format: wgpu::TextureFormat,
-    pipeline: &wgpu::RenderPipeline,
-) -> wgpu::Texture {
-    let dst = make_texture(
-        &ctx.device,
-        dst_w,
-        dst_h,
-        out_format,
-        wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::TEXTURE_BINDING,
-    );
-
-    let mut ub = [0u8; 16];
-    ub[0..4].copy_from_slice(&src_w.to_ne_bytes());
-    ub[4..8].copy_from_slice(&src_h.to_ne_bytes());
-    ub[8..12].copy_from_slice(&dst_w.to_ne_bytes());
-    ub[12..16].copy_from_slice(&dst_h.to_ne_bytes());
-
-    let bind_group = uniform_bind_group(ctx, src, &ub);
-    let dst_view = dst.create_view(&wgpu::TextureViewDescriptor::default());
-    draw_fullscreen(ctx, pipeline, &bind_group, &dst_view);
-    dst
-}
-
-/// Create a bind group for shaders that take a texture + 16-byte uniform buffer.
-fn uniform_bind_group(
-    ctx: &GpuContext,
-    src: &wgpu::Texture,
-    uniform_data: &[u8; 16],
-) -> wgpu::BindGroup {
-    let uniform_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: 16,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    ctx.queue.write_buffer(&uniform_buf, 0, uniform_data);
-
-    let src_view = src.create_view(&wgpu::TextureViewDescriptor::default());
-    ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &ctx.pipelines.uniform_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&src_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &uniform_buf,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-        ],
-    })
-}
-
-/// Submit a single full-screen quad draw into `dst_view`.
-fn draw_fullscreen(
-    ctx: &GpuContext,
-    pipeline: &wgpu::RenderPipeline,
-    bind_group: &wgpu::BindGroup,
-    dst_view: &wgpu::TextureView,
-) {
-    let mut encoder = ctx
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    {
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: dst_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, bind_group, &[]);
-        rpass.draw(0..4, 0..1);
-    }
-    ctx.queue.submit(std::iter::once(encoder.finish()));
-}
-
-fn make_texture(
-    device: &wgpu::Device,
-    w: u32,
-    h: u32,
-    format: wgpu::TextureFormat,
-    usage: wgpu::TextureUsages,
-) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: None,
-        size: wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage,
-        view_formats: &[],
-    })
-}
-
 // ─── DMA-BUF / swapchain path ─────────────────────────────────────────────────
 
 /// Errors produced by [`GpuContext::render_and_present`].
@@ -701,6 +560,8 @@ pub enum PresentError {
     CreateSurface(wgpu::CreateSurfaceError),
     /// Swapchain texture acquisition failed with a non-recoverable status.
     Unavailable(&'static str),
+    /// vello failed to render the scene.
+    Render(vello::Error),
 }
 
 #[cfg(feature = "dmabuf")]
@@ -709,6 +570,7 @@ impl std::fmt::Display for PresentError {
         match self {
             PresentError::CreateSurface(e) => write!(f, "surface creation error: {e}"),
             PresentError::Unavailable(reason) => write!(f, "swapchain unavailable: {reason}"),
+            PresentError::Render(e) => write!(f, "render error: {e}"),
         }
     }
 }
@@ -721,10 +583,10 @@ impl std::error::Error for PresentError {}
 pub(crate) struct SwapchainState {
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
-    /// Blit pipeline whose output format matches the swapchain format.
-    pub present_pipeline: wgpu::RenderPipeline,
-    /// Bind-group layout for the present blit (filterable texture + sampler).
-    pub present_bgl: wgpu::BindGroupLayout,
+    /// Copies the vello target onto the swapchain texture. vello renders with
+    /// compute shaders into a storage texture, which swapchain images usually
+    /// do not support directly.
+    pub blitter: wgpu::util::TextureBlitter,
 }
 
 #[cfg(feature = "dmabuf")]
@@ -816,50 +678,21 @@ impl GpuContext {
             };
             surface.configure(&device, &config);
 
-            let pipelines = GpuPipelines::new(&device);
-
-            let present_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("present_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-            let present_pipeline = make_pipeline(
-                &device,
-                &present_bgl,
-                include_str!("shaders/blit.wgsl"),
-                "vs_main",
-                "fs_main",
-                surface_format,
-            );
-
-            let swapchain = SwapchainState {
-                surface,
-                config,
-                present_pipeline,
-                present_bgl,
-            };
+            let renderer = create_renderer(&device)?;
+            let blitter = wgpu::util::TextureBlitter::new(&device, surface_format);
 
             Ok(Self {
                 device,
                 queue,
-                pipelines,
-                swapchain: Some(swapchain),
+                renderer,
+                scene: Scene::new(),
+                source: SourceCache::default(),
+                target: None,
+                swapchain: Some(SwapchainState {
+                    surface,
+                    config,
+                    blitter,
+                }),
             })
         })
     }
@@ -876,8 +709,8 @@ impl GpuContext {
     /// Render `src` for the given viewport and present it to the Wayland surface
     /// via the wgpu swapchain (zero PCIe readback).
     ///
-    /// On `wgpu::SurfaceError::Outdated` the swapchain is reconfigured and the
-    /// frame is skipped. All other errors are returned to the caller.
+    /// On `Outdated` / `Lost` the swapchain is reconfigured and the frame is
+    /// skipped. All other errors are returned to the caller.
     pub fn render_and_present(
         &mut self,
         src: &image::DynamicImage,
@@ -886,22 +719,15 @@ impl GpuContext {
         dst_h: u32,
         filter: super::FilterMethod,
     ) -> Result<(), PresentError> {
-        let scaled_w = ((src.width() as f32) * viewport.scale).max(1.0) as u32;
-        let scaled_h = ((src.height() as f32) * viewport.scale).max(1.0) as u32;
-
-        let rendered = super::gpu_render_inner(
-            src, viewport, dst_w, dst_h, scaled_w, scaled_h, filter, self,
-        );
-
         // Acquire swapchain frame. Inner block ensures `sc` is dropped before
         // any `&mut self` call (configure_surface).
         let frame = {
             let (result, dims) = {
                 let sc = self.swapchain.as_ref().expect("swapchain not initialised");
-                let result = sc.surface.get_current_texture();
-                let dims = (sc.config.width, sc.config.height);
-                (result, dims)
-                // sc dropped here
+                (
+                    sc.surface.get_current_texture(),
+                    (sc.config.width, sc.config.height),
+                )
             };
             match result {
                 wgpu::CurrentSurfaceTexture::Success(f)
@@ -919,6 +745,13 @@ impl GpuContext {
             }
         };
 
+        self.render_to_target(src, viewport, dst_w, dst_h, filter, Color::BLACK)
+            .map_err(PresentError::Render)?;
+        let target_view = self
+            .target
+            .as_ref()
+            .expect("target was just rendered")
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -926,66 +759,9 @@ impl GpuContext {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-
-        {
-            // Clear the full frame to opaque black.
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &frame_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            if let Some((out_tex, win_x, win_y)) = rendered {
-                let vis_w = out_tex.width();
-                let vis_h = out_tex.height();
-                let src_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-                let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-                    mag_filter: wgpu::FilterMode::Linear,
-                    min_filter: wgpu::FilterMode::Linear,
-                    ..Default::default()
-                });
-                // Re-borrow sc for pipeline/bgl after frame acquisition.
-                let sc = self.swapchain.as_ref().unwrap();
-                let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None,
-                    layout: &sc.present_bgl,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&src_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&sampler),
-                        },
-                    ],
-                });
-
-                rpass.set_pipeline(&sc.present_pipeline);
-                rpass.set_bind_group(0, &bind_group, &[]);
-                rpass.set_viewport(
-                    win_x as f32,
-                    win_y as f32,
-                    vis_w as f32,
-                    vis_h as f32,
-                    0.0,
-                    1.0,
-                );
-                rpass.set_scissor_rect(win_x, win_y, vis_w, vis_h);
-                rpass.draw(0..4, 0..1);
-            }
-        }
+        let sc = self.swapchain.as_ref().expect("swapchain not initialised");
+        sc.blitter
+            .copy(&self.device, &mut encoder, &target_view, &frame_view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         self.queue.present(frame);
