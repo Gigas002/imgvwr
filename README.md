@@ -17,7 +17,7 @@ A minimal, fast image viewer for Wayland, written in Rust.
 | Feature                      | Runtime requirement                                                  |
 | ---------------------------- | -------------------------------------------------------------------- |
 | `gpu-vulkan`                 | Vulkan-capable driver (Mesa, NVIDIA, etc.)                           |
-| `gpu-gles`                   | EGL + OpenGL ES 2.0 driver                                           |
+| `gpu-gles`                   | EGL + OpenGL ES 3.1 driver (vello needs compute shaders)             |
 | `dmabuf`                     | Compositor with `zwp_linux_dmabuf_v1` support (implies `gpu-vulkan`) |
 | `decorations`                | Compositor with `zxdg_decoration_manager_v1` support                 |
 | `avif` / `avif-anim`         | `libdav1d`                                                           |
@@ -47,8 +47,8 @@ A minimal, fast image viewer for Wayland, written in Rust.
 | `gif`         | no      | GIF (animated) decoding                          |
 | `apng`        | no      | Animated PNG decoding                            |
 | `decorations` | no      | Server-side window decorations                   |
-| `gpu-vulkan`  | no      | GPU rendering via wgpu/Vulkan                    |
-| `gpu-gles`    | no      | GPU rendering via wgpu/OpenGL ES                 |
+| `gpu-vulkan`  | no      | GPU rendering via vello on wgpu/Vulkan           |
+| `gpu-gles`    | no      | GPU rendering via vello on wgpu/OpenGL ES        |
 | `dmabuf`      | no      | DMA-BUF zero-copy display (implies `gpu-vulkan`) |
 | `logging`     | yes     | `RUST_LOG`-driven tracing output                 |
 | `config`      | yes     | TOML config file parsing                         |

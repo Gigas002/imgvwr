@@ -356,7 +356,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
         any(feature = "gpu-vulkan", feature = "gpu-gles"),
         not(feature = "dmabuf")
     ))]
-    let gpu_ctx = GpuContext::new()?;
+    let mut gpu_ctx = GpuContext::new()?;
 
     let mut navigator = Navigator::from_path(&settings.paths[0])?;
     let mut image = load_image(navigator.current())?;
@@ -453,7 +453,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
                     h,
                     effective_filter,
                     #[cfg(any(feature = "gpu-vulkan", feature = "gpu-gles"))]
-                    &gpu_ctx,
+                    &mut gpu_ctx,
                 );
                 wayland.commit_frame(&pixels, w, h)?;
             }
