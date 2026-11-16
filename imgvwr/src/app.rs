@@ -28,25 +28,6 @@ use libimgvwr::{
 
 use crate::settings::AppSettings;
 
-/// How long to wait for input before checking whether an animation frame is
-/// due. `None` (no animated formats compiled in) waits for input.
-#[cfg(any(
-    feature = "gif",
-    feature = "avif-anim",
-    feature = "jxl-anim",
-    feature = "webp-anim",
-    feature = "apng"
-))]
-const ANIMATION_POLL: Option<Duration> = Some(Duration::from_millis(16));
-#[cfg(not(any(
-    feature = "gif",
-    feature = "avif-anim",
-    feature = "jxl-anim",
-    feature = "webp-anim",
-    feature = "apng"
-)))]
-const ANIMATION_POLL: Option<Duration> = None;
-
 /// Holds either a static single image or an animated sequence of frames.
 enum ImageHolder {
     Static(DynamicImage),
@@ -101,11 +82,32 @@ impl ImageHolder {
             if now >= *next_at {
                 *current = (*current + 1) % frames.len();
                 let delay = frames[*current].1;
-                *next_at = now + delay;
+                // Keep the animation's own clock; only resync after a stall.
+                *next_at += delay;
+                if *next_at <= now {
+                    *next_at = now + delay;
+                }
                 return true;
             }
         }
         false
+    }
+
+    /// Time until the next animation frame is due; `None` for a still image.
+    fn next_frame_in(&self) -> Option<Duration> {
+        match self {
+            Self::Static(_) => None,
+            #[cfg(any(
+                feature = "gif",
+                feature = "avif-anim",
+                feature = "jxl-anim",
+                feature = "webp-anim",
+                feature = "apng"
+            ))]
+            Self::Animated { next_at, .. } => {
+                Some(next_at.saturating_duration_since(Instant::now()))
+            }
+        }
     }
 }
 
@@ -410,7 +412,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
         let timeout = if wayland.state.needs_redraw {
             Some(Duration::ZERO)
         } else {
-            ANIMATION_POLL
+            image.next_frame_in()
         };
         wayland.dispatch(timeout)?;
 
