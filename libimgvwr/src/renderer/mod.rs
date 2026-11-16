@@ -68,8 +68,10 @@ impl From<FilterMethod> for imageops::FilterType {
 ///
 /// The image is scaled according to `viewport.scale`, rotated by
 /// `viewport.rotation`, then blitted centred in the destination with
-/// `viewport.offset` applied. Regions not covered by the image are filled
-/// with opaque black (`0xFF000000`).
+/// `viewport.offset` applied. Regions not covered by the image are left
+/// fully transparent (`0x00000000`), so the compositor shows what is behind
+/// the window there. (The dmabuf swapchain path, which does not go through
+/// this function, clears to opaque black instead.)
 ///
 /// The returned `Vec<u8>` is suitable for writing directly into a Wayland SHM
 /// pool (`wl_shm_format::ARGB8888`, 4 bytes per pixel, row-major).
