@@ -36,6 +36,8 @@ impl Navigator {
             return Self::from_list(scan_dir(p)?, 0);
         }
 
+        // A missing file is an error, not a cue to show its neighbours.
+        std::fs::metadata(p).map_err(|e| with_path(p, e))?;
         let dir = parent_dir(p);
         let mut paths = scan_dir(dir)?;
         let name = p
@@ -71,6 +73,7 @@ impl Navigator {
                     if p.is_dir() {
                         list.extend(scan_dir(p)?);
                     } else {
+                        std::fs::metadata(p).map_err(|e| with_path(p, e))?;
                         list.push(p.clone());
                     }
                 }
@@ -122,6 +125,11 @@ impl Navigator {
     }
 }
 
+/// `e` with `path` in front, so the message says which file it is about.
+fn with_path(path: &Path, e: io::Error) -> io::Error {
+    io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+}
+
 /// Directory holding `p`; `.` for a bare file name.
 fn parent_dir(p: &Path) -> &Path {
     match p.parent() {
@@ -132,7 +140,8 @@ fn parent_dir(p: &Path) -> &Path {
 
 /// Supported images in `dir`, sorted by file name.
 fn scan_dir(dir: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)?
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| with_path(dir, e))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| is_supported(p))

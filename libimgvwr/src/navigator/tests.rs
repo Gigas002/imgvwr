@@ -154,3 +154,18 @@ fn make_files(dir: &std::path::Path, names: &[&str]) {
         std::fs::File::create(dir.join(name)).unwrap();
     }
 }
+
+#[test]
+fn a_missing_file_is_an_error_naming_it() {
+    let dir = tempdir().unwrap();
+    make_files(dir.path(), &["a.png"]);
+    let missing = dir.path().join("typo.png");
+    for result in [
+        Navigator::from_path(&missing),
+        Navigator::from_paths(&[dir.path().join("a.png"), missing.clone()]),
+    ] {
+        let err = result.err().expect("missing file must fail");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("typo.png"), "{err}");
+    }
+}
