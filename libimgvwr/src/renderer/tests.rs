@@ -215,8 +215,42 @@ mod gpu {
     fn level_size_halves_and_never_reaches_zero() {
         assert_eq!(level_size(100, 50, 0), (100, 50));
         assert_eq!(level_size(100, 50, 1), (50, 25));
-        assert_eq!(level_size(100, 50, 6), (1, 1));
+        assert_eq!(level_size(100, 50, 6), (2, 1));
         assert_eq!(level_size(100, 50, 40), (1, 1));
+    }
+
+    #[test]
+    fn level_size_matches_the_levels_halve_builds() {
+        // Odd sides round up; flooring them made the level and the size the
+        // transform assumed disagree (and tripped a debug assertion).
+        let (mut w, mut h) = (6001u32, 3999u32);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for level in 1..=4 {
+            let next = halve(&data, w, h, FilterMethod::Triangle);
+            (w, h) = next.dimensions();
+            assert_eq!(level_size(6001, 3999, level), (w, h), "level {level}");
+            data = next.into_raw();
+        }
+    }
+
+    #[test]
+    fn halve_averages_blocks_and_repeats_odd_edges() {
+        // 3×1: [0, 100, 200] → [avg(0,100), 200]
+        let px = |v: u8| [v, v, v, 255];
+        let src: Vec<u8> = [px(0), px(100), px(200)].concat();
+        let out = halve(&src, 3, 1, FilterMethod::Lanczos3);
+        assert_eq!(out.dimensions(), (2, 1));
+        assert_eq!(out.get_pixel(0, 0).0, [50, 50, 50, 255]);
+        assert_eq!(out.get_pixel(1, 0).0, [200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn halve_keeps_hard_pixels_for_nearest() {
+        let px = |v: u8| [v, v, v, 255];
+        let src: Vec<u8> = [px(0), px(100), px(200), px(255)].concat();
+        let out = halve(&src, 2, 2, FilterMethod::Nearest);
+        assert_eq!(out.dimensions(), (1, 1));
+        assert_eq!(out.get_pixel(0, 0).0, [0, 0, 0, 255]);
     }
 
     #[test]
