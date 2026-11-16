@@ -22,8 +22,8 @@ use tracing::{debug, info};
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat,
+        wl_shm, wl_shm_pool, wl_surface,
     },
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -116,6 +116,10 @@ pub struct WaylandState {
     pointer_pressed: bool,
     /// Vertical scrolling received in the current pointer frame.
     scroll: ScrollFrame,
+    /// Which of the two SHM buffers the compositor has not released yet.
+    shm_busy: [bool; 2],
+    /// A frame callback was requested and has not fired yet.
+    frame_pending: bool,
 
     /// Set to `true` when the compositor requests the window be closed.
     pub closed: bool,
@@ -148,6 +152,8 @@ impl WaylandState {
             pointer_pos: (0.0, 0.0),
             pointer_pressed: false,
             scroll: ScrollFrame::default(),
+            shm_busy: [false; 2],
+            frame_pending: false,
             closed: false,
             needs_redraw: false,
             window_size: initial_size,
@@ -195,10 +201,28 @@ pub struct WaylandContext {
     /// Public Wayland state — surfaces, globals, pending events, flags.
     pub state: WaylandState,
     event_queue: EventQueue<WaylandState>,
-    /// SHM pool backing the pixel buffer. Created on first commit; resized as needed.
-    shm_pool: Option<ShmPool>,
-    /// The `wl_buffer` attached in the previous frame. Destroyed before each new commit.
-    prev_buffer: Option<wl_buffer::WlBuffer>,
+    /// Two SHM buffers that take turns. Created on the first commit and
+    /// recreated when the window size changes.
+    shm: Option<ShmBuffers>,
+}
+
+/// Two same-sized `wl_buffer`s in one SHM pool. A frame is written into a
+/// buffer the compositor has released, never into the one it may still be
+/// reading.
+struct ShmBuffers {
+    pool: ShmPool,
+    wl_pool: wl_shm_pool::WlShmPool,
+    size: (u32, u32),
+    buffers: [wl_buffer::WlBuffer; 2],
+}
+
+impl Drop for ShmBuffers {
+    fn drop(&mut self) {
+        for buffer in &self.buffers {
+            buffer.destroy();
+        }
+        self.wl_pool.destroy();
+    }
 }
 
 impl WaylandContext {
@@ -274,61 +298,90 @@ impl WaylandContext {
             conn,
             state,
             event_queue,
-            shm_pool: None,
-            prev_buffer: None,
+            shm: None,
         })
     }
 
-    /// Write `pixels` (ARGB8888, `w × h × 4` bytes) into a Wayland SHM buffer
-    /// and commit it to the surface.
+    /// Write `pixels` (ARGB8888, `w × h × 4` bytes) into a free SHM buffer,
+    /// commit it, and ask for a frame callback.
+    ///
+    /// Call it only when [`WaylandContext::ready_for_frame`] is true: until
+    /// the compositor signals the callback, another frame would never be
+    /// shown (for example while the window is on a hidden workspace).
     pub fn commit_frame(&mut self, pixels: &[u8], w: u32, h: u32) -> io::Result<()> {
-        let size = (w * h * 4) as usize;
-
-        // Create or grow the SHM backing store.
-        match &self.shm_pool {
-            None => self.shm_pool = Some(ShmPool::create(size)?),
-            Some(p) if p.size < size => self.shm_pool.as_mut().unwrap().resize(size)?,
-            _ => {}
+        let frame_len = w as usize * h as usize * 4;
+        if pixels.len() != frame_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "pixel buffer does not match the frame size",
+            ));
+        }
+        if self.shm.as_ref().is_none_or(|b| b.size != (w, h)) {
+            // Free the old buffers before mapping the new ones.
+            self.shm = None;
+            self.shm = Some(self.create_shm_buffers(w, h)?);
+            self.state.shm_busy = [false; 2];
         }
 
-        self.shm_pool.as_mut().unwrap().as_mut_slice()[..size].copy_from_slice(pixels);
-
-        // Build a wl_shm_pool + wl_buffer for this frame.
-        let stride = w as i32 * 4;
-        let wl_pool = {
-            let fd = self.shm_pool.as_ref().unwrap().fd();
-            let wl_shm = self
-                .state
-                .wl_shm()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "wl_shm not bound"))?;
-            wl_shm.create_pool(fd, size as i32, self.state.qh(), ())
+        // Normally the other buffer was released long ago; if the compositor
+        // still holds both, wait for one.
+        let slot = loop {
+            if let Some(slot) = self.state.shm_busy.iter().position(|busy| !busy) {
+                break slot;
+            }
+            self.dispatch(None)?;
         };
-        let buffer = wl_pool.create_buffer(
-            0,
-            w as i32,
-            h as i32,
-            stride,
-            wl_shm::Format::Argb8888,
-            self.state.qh(),
-            (),
-        );
-        wl_pool.destroy();
 
-        // Destroy the previous frame's buffer before the new one takes the surface slot.
-        if let Some(prev) = self.prev_buffer.take() {
-            prev.destroy();
-        }
+        let shm = self.shm.as_mut().expect("buffers were just created");
+        shm.pool.as_mut_slice()[slot * frame_len..][..frame_len].copy_from_slice(pixels);
 
         let surface = self
             .state
             .surface()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "surface not available"))?;
-        surface.attach(Some(&buffer), 0, 0);
+        surface.attach(Some(&shm.buffers[slot]), 0, 0);
         surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.frame(self.state.qh(), ());
         surface.commit();
-
-        self.prev_buffer = Some(buffer);
+        self.state.shm_busy[slot] = true;
+        self.state.frame_pending = true;
         self.flush()
+    }
+
+    fn create_shm_buffers(&self, w: u32, h: u32) -> io::Result<ShmBuffers> {
+        let frame_len = w as usize * h as usize * 4;
+        let pool_len = i32::try_from(frame_len * 2)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "window too large"))?;
+        let pool = ShmPool::create(pool_len as usize)?;
+        let wl_shm = self
+            .state
+            .wl_shm()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "wl_shm not bound"))?;
+        let wl_pool = wl_shm.create_pool(pool.fd(), pool_len, self.state.qh(), ());
+        let buffer = |slot: usize| {
+            wl_pool.create_buffer(
+                (slot * frame_len) as i32,
+                w as i32,
+                h as i32,
+                w as i32 * 4,
+                wl_shm::Format::Argb8888,
+                self.state.qh(),
+                slot,
+            )
+        };
+        let buffers = [buffer(0), buffer(1)];
+        Ok(ShmBuffers {
+            pool,
+            wl_pool,
+            size: (w, h),
+            buffers,
+        })
+    }
+
+    /// Whether the compositor wants a new frame: false between a
+    /// [`WaylandContext::commit_frame`] and its frame callback.
+    pub fn ready_for_frame(&self) -> bool {
+        !self.state.frame_pending
     }
 
     /// Flush the outgoing Wayland socket buffer.
@@ -719,15 +772,33 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for WaylandState {
     }
 }
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for WaylandState {
+impl Dispatch<wl_buffer::WlBuffer, usize> for WaylandState {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &wl_buffer::WlBuffer,
-        _: wl_buffer::Event,
+        event: wl_buffer::Event,
+        slot: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            state.shm_busy[*slot] = false;
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.frame_pending = false;
+        }
     }
 }
 

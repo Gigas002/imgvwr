@@ -442,16 +442,25 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
         wayland.set_title(&make_title(navigator.current()));
     }
 
+    // A frame is owed but the compositor has not asked for one yet.
+    let mut redraw_pending = false;
+
     loop {
-        let timeout = if wayland.state.needs_redraw {
-            Some(Duration::ZERO)
+        let timeout = if wayland.state.needs_redraw || redraw_pending {
+            // Draw right away if the compositor wants a frame, else sleep
+            // until its frame callback (never, while the window is hidden).
+            if wayland.ready_for_frame() {
+                Some(Duration::ZERO)
+            } else {
+                None
+            }
         } else {
             image.next_frame_in()
         };
         wayland.dispatch(timeout)?;
 
         let events: Vec<InputEvent> = std::mem::take(&mut wayland.state.pending_events);
-        let mut dirty = wayland.state.needs_redraw;
+        let mut dirty = wayland.state.needs_redraw || redraw_pending;
         wayland.state.needs_redraw = false;
         let mut any_navigated = false;
 
@@ -487,7 +496,8 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if dirty {
+        redraw_pending = dirty && !wayland.ready_for_frame();
+        if dirty && !redraw_pending {
             let frame_start = std::time::Instant::now();
             let (w, h) = wayland.state.window_size;
             if fitted {
