@@ -569,3 +569,51 @@ fn webp_anim_frame_delays_are_at_least_10ms() {
         assert!(delay.as_millis() >= 10, "frame delay below 10 ms minimum");
     }
 }
+
+#[cfg(feature = "gif")]
+#[test]
+fn frame_budget_admits_up_to_the_limit() {
+    let mut budget = FrameBudget::default();
+    // 16384² RGBA = exactly 1 GiB
+    assert!(budget.admit(16384, 16384));
+    assert!(!budget.admit(1, 1));
+    // Absurd header sizes saturate instead of overflowing.
+    let mut budget = FrameBudget::default();
+    assert!(!budget.admit(u32::MAX, u32::MAX));
+}
+
+#[cfg(feature = "gif")]
+#[test]
+fn oversized_gif_animation_keeps_only_its_first_frame() {
+    use image::AnimationDecoder;
+    use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
+    use image::{Frame, RgbaImage};
+    let mut bytes = Vec::new();
+    {
+        let mut enc = GifEncoder::new(&mut bytes);
+        enc.set_repeat(Repeat::Infinite).unwrap();
+        for _ in 0..3 {
+            enc.encode_frame(Frame::new(RgbaImage::new(10, 10)))
+                .unwrap();
+        }
+    }
+    let frames = || {
+        GifDecoder::new(std::io::Cursor::new(&bytes))
+            .unwrap()
+            .into_frames()
+    };
+    let path = Path::new("test.gif");
+    // Room for two 10×10 RGBA frames: the third is over budget.
+    let anim = collect_budgeted(path, frames(), FrameBudget::with_limit(800)).unwrap();
+    assert_eq!(anim.frames.len(), 1);
+    let anim = collect_budgeted(path, frames(), FrameBudget::with_limit(1200)).unwrap();
+    assert_eq!(anim.frames.len(), 3);
+}
+
+#[cfg(feature = "jxl")]
+#[test]
+fn rgba_stride_refuses_oversized_images_before_allocating() {
+    assert_eq!(rgba_stride(100, 50, MAX_IMAGE_BYTES).unwrap(), 400);
+    assert!(rgba_stride(100_000, 100_000, MAX_IMAGE_BYTES).is_err());
+    assert!(rgba_stride(usize::MAX, 2, usize::MAX).is_err());
+}
