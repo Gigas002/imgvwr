@@ -5,7 +5,6 @@ description = "Minimal Wayland image viewer"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 [[bin]]
 name = "imgvwr"
