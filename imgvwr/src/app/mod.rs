@@ -28,6 +28,9 @@ use libimgvwr::{
 
 use crate::settings::AppSettings;
 
+#[cfg(test)]
+mod tests;
+
 /// Holds either a static single image or an animated sequence of frames.
 enum ImageHolder {
     Static(DynamicImage),
@@ -116,6 +119,8 @@ struct EventOutcome {
     dirty: bool,
     quit: bool,
     navigated: bool,
+    /// The user zoomed or panned, so the view no longer follows the window.
+    unfit: bool,
 }
 
 #[cfg(feature = "decorations")]
@@ -127,9 +132,20 @@ fn make_title(path: &Path) -> String {
     format!("{name} — imgvwr")
 }
 
-fn fit_scale(img: &DynamicImage, window: (u32, u32), min_scale: f32, max_scale: f32) -> f32 {
-    let sw = window.0 as f32 / img.width() as f32;
-    let sh = window.1 as f32 / img.height() as f32;
+/// Scale at which `img`, rotated by `rotation`, fits inside `window`.
+fn fit_scale(
+    img: &DynamicImage,
+    rotation: u16,
+    window: (u32, u32),
+    min_scale: f32,
+    max_scale: f32,
+) -> f32 {
+    let (w, h) = match rotation {
+        90 | 270 => (img.height(), img.width()),
+        _ => (img.width(), img.height()),
+    };
+    let sw = window.0 as f32 / w.max(1) as f32;
+    let sh = window.1 as f32 / h.max(1) as f32;
     sw.min(sh).clamp(min_scale, max_scale)
 }
 
@@ -222,7 +238,7 @@ fn on_navigate_prev(
     EventOutcome {
         dirty: success,
         navigated: success,
-        quit: false,
+        ..Default::default()
     }
 }
 
@@ -236,7 +252,7 @@ fn on_navigate_next(
     EventOutcome {
         dirty: success,
         navigated: success,
-        quit: false,
+        ..Default::default()
     }
 }
 
@@ -274,7 +290,7 @@ fn on_delete_file(
                     EventOutcome {
                         dirty: success,
                         navigated: success,
-                        quit: false,
+                        ..Default::default()
                     }
                 }
                 None => EventOutcome {
@@ -306,6 +322,7 @@ fn on_scroll(
     );
     EventOutcome {
         dirty: true,
+        unfit: true,
         ..Default::default()
     }
 }
@@ -314,6 +331,7 @@ fn on_pointer_motion(dx: f32, dy: f32, viewport: &mut ViewportState) -> EventOut
     viewport.pan(dx, dy);
     EventOutcome {
         dirty: true,
+        unfit: true,
         ..Default::default()
     }
 }
@@ -396,12 +414,8 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "dmabuf")]
     let mut last_surface_size = wayland.state.window_size;
 
-    viewport.scale = fit_scale(
-        image.current(),
-        wayland.state.window_size,
-        settings.min_scale,
-        settings.max_scale,
-    );
+    // The image follows the window size until the user zooms or pans.
+    let mut fitted = true;
 
     #[cfg(feature = "decorations")]
     if settings.decorations {
@@ -434,18 +448,17 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
             );
             dirty |= outcome.dirty;
             any_navigated |= outcome.navigated;
+            if outcome.navigated {
+                fitted = true;
+            } else if outcome.unfit {
+                fitted = false;
+            }
             if outcome.quit {
                 wayland.state.closed = true;
             }
         }
 
         if any_navigated {
-            viewport.scale = fit_scale(
-                image.current(),
-                wayland.state.window_size,
-                settings.min_scale,
-                settings.max_scale,
-            );
             dirty = true;
 
             #[cfg(feature = "decorations")]
@@ -457,6 +470,16 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
         if dirty {
             let frame_start = std::time::Instant::now();
             let (w, h) = wayland.state.window_size;
+            if fitted {
+                viewport.scale = fit_scale(
+                    image.current(),
+                    viewport.rotation,
+                    (w, h),
+                    settings.min_scale,
+                    settings.max_scale,
+                );
+                viewport.offset = (0.0, 0.0);
+            }
             let effective_filter = if settings.antialiasing {
                 settings.filter
             } else {
