@@ -37,6 +37,9 @@ use crate::wayland::{
     shm::ShmPool,
 };
 
+/// Linux evdev code of the left mouse button, the one that drags the image.
+const BTN_LEFT: u32 = 0x110;
+
 // ── Input events ────────────────────────────────────────────────────────────
 
 /// Input events collected during dispatch and consumed by the event loop.
@@ -545,7 +548,20 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandState {
         _: &QueueHandle<Self>,
     ) {
         match event {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                // Zooming before the first motion anchors on this position.
+                state.pointer_pos = (surface_x, surface_y);
+            }
+            wl_pointer::Event::Leave { .. } => {
+                // No release arrives for a press the compositor took away.
+                state.pointer_pressed = false;
+            }
             wl_pointer::Event::Button {
+                button: BTN_LEFT,
                 state: WEnum::Value(btn),
                 ..
             } => {
