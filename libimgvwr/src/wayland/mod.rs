@@ -10,6 +10,8 @@
 
 pub mod keyboard;
 pub mod shm;
+#[cfg(test)]
+mod tests;
 
 use std::{io, time::Duration};
 
@@ -18,7 +20,7 @@ use tracing::warn;
 use tracing::{debug, info};
 
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle, WEnum,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
@@ -46,13 +48,39 @@ const BTN_LEFT: u32 = 0x110;
 pub enum InputEvent {
     /// A key was pressed; carries the resolved XKB keysym.
     Key(Keysym),
-    /// Vertical scroll wheel tick. Positive = scroll down.
+    /// Vertical scroll in wheel notches (fractional for high-resolution
+    /// wheels and touchpads). Positive = zoom in (scroll up).
     /// Carries the pointer position at the time of the event (surface coords).
     Scroll { delta: f32, cursor: (f32, f32) },
     /// Left mouse button pressed (`true`) or released (`false`).
     PointerButton { pressed: bool },
     /// Mouse moved while the button was held; delta in surface pixels.
     PointerMotion { dx: f32, dy: f32 },
+}
+
+/// Vertical scroll amounts of one `wl_pointer` frame.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub(crate) struct ScrollFrame {
+    /// Sum of `axis` values, in surface-local scroll units.
+    pub value: f64,
+    /// Sum of `axis_value120` values (120 per wheel notch), when sent.
+    pub value120: Option<i32>,
+}
+
+/// `axis` units per wheel notch when the compositor does not say: libinput
+/// reports 15° of rotation per notch and compositors pass that through.
+const AXIS_UNITS_PER_NOTCH: f64 = 15.0;
+
+impl ScrollFrame {
+    /// Distance scrolled in wheel notches (positive = down), or `None` when
+    /// the frame did not scroll vertically.
+    pub(crate) fn notches(&self) -> Option<f32> {
+        let notches = match self.value120 {
+            Some(v120) => f64::from(v120) / 120.0,
+            None => self.value / AXIS_UNITS_PER_NOTCH,
+        };
+        (notches != 0.0).then_some(notches as f32)
+    }
 }
 
 // ── WaylandState ────────────────────────────────────────────────────────────
@@ -86,6 +114,8 @@ pub struct WaylandState {
     pointer: Option<wl_pointer::WlPointer>,
     pointer_pos: (f64, f64),
     pointer_pressed: bool,
+    /// Vertical scrolling received in the current pointer frame.
+    scroll: ScrollFrame,
 
     /// Set to `true` when the compositor requests the window be closed.
     pub closed: bool,
@@ -117,10 +147,24 @@ impl WaylandState {
             pointer: None,
             pointer_pos: (0.0, 0.0),
             pointer_pressed: false,
+            scroll: ScrollFrame::default(),
             closed: false,
             needs_redraw: false,
             window_size: initial_size,
             pending_events: Vec::new(),
+        }
+    }
+
+    /// Turn the scrolling collected in this pointer frame into one
+    /// [`InputEvent::Scroll`].
+    fn finish_scroll(&mut self) {
+        let scroll = std::mem::take(&mut self.scroll);
+        if let Some(notches) = scroll.notches() {
+            let cursor = (self.pointer_pos.0 as f32, self.pointer_pos.1 as f32);
+            self.pending_events.push(InputEvent::Scroll {
+                delta: -notches,
+                cursor,
+            });
         }
     }
 
@@ -352,7 +396,6 @@ impl WaylandContext {
     /// `WaylandContext`. Must not be used after `WaylandContext` is dropped.
     #[cfg(feature = "dmabuf")]
     pub fn surface_ptr(&self) -> std::ptr::NonNull<std::ffi::c_void> {
-        use wayland_client::Proxy;
         let ptr = self
             .state
             .surface
@@ -541,7 +584,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandState {
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandState {
     fn event(
         state: &mut Self,
-        _: &wl_pointer::WlPointer,
+        pointer: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
         _: &(),
         _: &Connection,
@@ -590,15 +633,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandState {
                 value,
                 ..
             } => {
-                // Normalise: raw axis value is ~10–15 units per wheel notch on most
-                // compositors (wlroots/libinput default is 15). Dividing by 10.0 maps
-                // one notch to ≈1.0, so `scale_step` in config means "zoom % per notch".
-                let cursor = (state.pointer_pos.0 as f32, state.pointer_pos.1 as f32);
-                state.pending_events.push(InputEvent::Scroll {
-                    delta: -value as f32 / 10.0,
-                    cursor,
-                });
+                state.scroll.value += value;
+                if pointer.version() < 5 {
+                    // No frame events before v5: every axis event stands alone.
+                    state.finish_scroll();
+                }
             }
+            wl_pointer::Event::AxisValue120 {
+                axis: WEnum::Value(wl_pointer::Axis::VerticalScroll),
+                value120,
+            } => {
+                *state.scroll.value120.get_or_insert(0) += value120;
+            }
+            wl_pointer::Event::Frame => state.finish_scroll(),
             _ => {}
         }
     }
