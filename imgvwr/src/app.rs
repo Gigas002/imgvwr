@@ -455,6 +455,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if dirty {
+            let frame_start = std::time::Instant::now();
             let (w, h) = wayland.state.window_size;
             let effective_filter = if settings.antialiasing {
                 settings.filter
@@ -484,6 +485,13 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
                 );
                 wayland.commit_frame(&pixels, w, h)?;
             }
+
+            debug!(
+                ms = frame_start.elapsed().as_secs_f64() * 1000.0,
+                scale = viewport.scale,
+                offset = ?viewport.offset,
+                "frame"
+            );
         }
 
         if wayland.state.closed {
