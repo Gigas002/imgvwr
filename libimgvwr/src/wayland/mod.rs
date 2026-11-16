@@ -11,7 +11,7 @@
 pub mod keyboard;
 pub mod shm;
 
-use std::io;
+use std::{io, time::Duration};
 
 #[cfg(feature = "decorations")]
 use tracing::warn;
@@ -291,75 +291,46 @@ impl WaylandContext {
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))
     }
 
-    /// Dispatch pending Wayland events.
+    /// Wait up to `timeout` for compositor events and dispatch them.
     ///
-    /// Without any animated-format feature: uses `blocking_dispatch`, which
-    /// parks the thread until a compositor event arrives — correct and idle for
-    /// static images.
-    ///
-    /// With an animated-format feature (e.g. `gif`): uses a `poll` timeout so
-    /// the animation loop can call `tick()` on a regular cadence even without
-    /// user input.
-    pub fn dispatch(&mut self, timeout_ms: i32) -> io::Result<()> {
-        #[cfg(any(
-            feature = "gif",
-            feature = "avif-anim",
-            feature = "jxl-anim",
-            feature = "webp-anim",
-            feature = "apng"
-        ))]
-        {
-            use std::os::fd::AsFd;
+    /// `None` waits until an event arrives; `Some(Duration::ZERO)` only
+    /// dispatches what is already readable. Callers pass a zero timeout while
+    /// a redraw is pending, so the first frame is drawn without waiting for
+    /// input: a window that never got a buffer is never mapped and so never
+    /// receives any.
+    pub fn dispatch(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        use std::os::fd::AsFd;
 
-            self.flush()?;
+        self.flush()?;
 
-            if let Some(guard) = self.event_queue.prepare_read() {
-                let fd = self.conn.as_fd();
-                let mut pfd = [rustix::event::PollFd::new(
-                    &fd,
-                    rustix::event::PollFlags::IN,
-                )];
-                let timeout_spec;
-                let timeout = if timeout_ms < 0 {
-                    None
-                } else {
-                    timeout_spec = rustix::time::Timespec {
-                        tv_sec: (timeout_ms / 1000) as i64,
-                        tv_nsec: ((timeout_ms % 1000) * 1_000_000) as i64,
-                    };
-                    Some(&timeout_spec)
-                };
-                let _ = rustix::event::poll(&mut pfd, timeout);
-                // Always attempt the read: WouldBlock means no data arrived
-                // (spurious wakeup or data already drained), which is fine.
-                match guard.read() {
-                    Ok(_) => {}
-                    Err(wayland_client::backend::WaylandError::Io(e))
-                        if e.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => return Err(io::Error::other(e)),
-                }
+        if let Some(guard) = self.event_queue.prepare_read() {
+            let fd = self.conn.as_fd();
+            let mut pfd = [rustix::event::PollFd::new(
+                &fd,
+                rustix::event::PollFlags::IN,
+            )];
+            let timeout = timeout.map(|t| rustix::time::Timespec {
+                tv_sec: t.as_secs().try_into().unwrap_or(i64::MAX),
+                tv_nsec: t.subsec_nanos().into(),
+            });
+            match rustix::event::poll(&mut pfd, timeout.as_ref()) {
+                Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                Err(e) => return Err(e.into()),
             }
-
-            self.event_queue
-                .dispatch_pending(&mut self.state)
-                .map(|_| ())
-                .map_err(io::Error::other)
+            // Always attempt the read: WouldBlock means no data arrived
+            // (timeout or spurious wakeup), which is fine.
+            match guard.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(e))
+                    if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(io::Error::other(e)),
+            }
         }
 
-        #[cfg(not(any(
-            feature = "gif",
-            feature = "avif-anim",
-            feature = "jxl-anim",
-            feature = "webp-anim",
-            feature = "apng"
-        )))]
-        {
-            let _ = timeout_ms;
-            self.event_queue
-                .blocking_dispatch(&mut self.state)
-                .map(|_| ())
-                .map_err(io::Error::other)
-        }
+        self.event_queue
+            .dispatch_pending(&mut self.state)
+            .map(|_| ())
+            .map_err(io::Error::other)
     }
 
     /// Raw `wl_display *` pointer for wgpu surface creation.

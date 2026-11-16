@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 #[cfg(any(
     feature = "gif",
     feature = "avif-anim",
@@ -26,6 +27,25 @@ use libimgvwr::{
 };
 
 use crate::settings::AppSettings;
+
+/// How long to wait for input before checking whether an animation frame is
+/// due. `None` (no animated formats compiled in) waits for input.
+#[cfg(any(
+    feature = "gif",
+    feature = "avif-anim",
+    feature = "jxl-anim",
+    feature = "webp-anim",
+    feature = "apng"
+))]
+const ANIMATION_POLL: Option<Duration> = Some(Duration::from_millis(16));
+#[cfg(not(any(
+    feature = "gif",
+    feature = "avif-anim",
+    feature = "jxl-anim",
+    feature = "webp-anim",
+    feature = "apng"
+)))]
+const ANIMATION_POLL: Option<Duration> = None;
 
 /// Holds either a static single image or an animated sequence of frames.
 enum ImageHolder {
@@ -387,7 +407,12 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        wayland.dispatch(16)?;
+        let timeout = if wayland.state.needs_redraw {
+            Some(Duration::ZERO)
+        } else {
+            ANIMATION_POLL
+        };
+        wayland.dispatch(timeout)?;
 
         let events: Vec<InputEvent> = std::mem::take(&mut wayland.state.pending_events);
         let mut dirty = wayland.state.needs_redraw;
