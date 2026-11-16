@@ -398,7 +398,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     ))]
     let mut gpu_ctx = GpuContext::new()?;
 
-    let mut navigator = Navigator::from_path(&settings.paths[0])?;
+    let mut navigator = Navigator::from_paths(&settings.paths)?;
     let mut image = load_image(navigator.current())?;
     info!(path = %navigator.current().display(), "loaded first image");
 
