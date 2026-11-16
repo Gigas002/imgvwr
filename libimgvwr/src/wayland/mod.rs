@@ -460,18 +460,15 @@ impl WaylandContext {
         std::ptr::NonNull::new(ptr).expect("wl_surface must not be null")
     }
 
-    /// Set the XDG toplevel window title.
+    /// Set the XDG toplevel window title, shown by task switchers and bars
+    /// (and by server-side decorations, when used).
     ///
-    /// Only available when the `decorations` feature is enabled. The title is
-    /// buffered and sent on the next Wayland socket flush (i.e. the next
-    /// `dispatch` call or `commit_frame`).
-    #[cfg(feature = "decorations")]
+    /// The title is buffered and sent on the next Wayland socket flush (i.e.
+    /// the next `dispatch` call or `commit_frame`).
     pub fn set_title(&mut self, title: &str) {
         if let Some(toplevel) = &self.state.xdg_toplevel {
             debug!(title, "setting window title");
             toplevel.set_title(title.to_string());
-        } else {
-            warn!("set_title called but xdg_toplevel is not yet initialised");
         }
     }
 }

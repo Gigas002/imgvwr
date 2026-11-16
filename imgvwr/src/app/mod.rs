@@ -11,7 +11,6 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "decorations")]
 use std::path::Path;
 
 use image::DynamicImage;
@@ -123,7 +122,6 @@ struct EventOutcome {
     unfit: bool,
 }
 
-#[cfg(feature = "decorations")]
 fn make_title(path: &Path) -> String {
     let name = path
         .file_name()
@@ -437,10 +435,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     // The image follows the window size until the user zooms or pans.
     let mut fitted = true;
 
-    #[cfg(feature = "decorations")]
-    if settings.decorations {
-        wayland.set_title(&make_title(navigator.current()));
-    }
+    wayland.set_title(&make_title(navigator.current()));
 
     // A frame is owed but the compositor has not asked for one yet.
     let mut redraw_pending = false;
@@ -490,10 +485,7 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
         if any_navigated {
             dirty = true;
 
-            #[cfg(feature = "decorations")]
-            if settings.decorations {
-                wayland.set_title(&make_title(navigator.current()));
-            }
+            wayland.set_title(&make_title(navigator.current()));
         }
 
         redraw_pending = dirty && !wayland.ready_for_frame();

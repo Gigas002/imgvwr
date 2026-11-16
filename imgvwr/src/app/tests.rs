@@ -125,3 +125,8 @@ mod navigation {
         assert_eq!(name(&nav), "b.png");
     }
 }
+
+#[test]
+fn title_names_the_file() {
+    assert_eq!(make_title(Path::new("/pics/cat.png")), "cat.png — imgvwr");
+}
