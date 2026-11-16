@@ -228,27 +228,45 @@ fn navigate_to(path: PathBuf, image: &mut ImageHolder, viewport: &mut ViewportSt
     }
 }
 
-fn on_navigate_prev(
+/// Show the first entry that loads, walking the list `forward` or back from
+/// the cursor: from the cursor itself when `try_current`, else from the next
+/// entry. Every entry is tried at most once, and the one on screen is not
+/// reloaded. When nothing loads, the cursor goes back to where it was, so it
+/// always names the image on screen (the one Delete removes).
+fn show_loadable(
     navigator: &mut Navigator,
+    forward: bool,
+    try_current: bool,
     image: &mut ImageHolder,
     viewport: &mut ViewportState,
-) -> EventOutcome {
-    let path = navigator.prev().to_path_buf();
-    let success = navigate_to(path, image, viewport);
-    EventOutcome {
-        dirty: success,
-        navigated: success,
-        ..Default::default()
+) -> bool {
+    let start = navigator.current;
+    for attempt in 0..navigator.paths.len() {
+        if attempt > 0 || !try_current {
+            if forward {
+                navigator.next();
+            } else {
+                navigator.prev();
+            }
+            if !try_current && navigator.current == start {
+                break;
+            }
+        }
+        if navigate_to(navigator.current().to_path_buf(), image, viewport) {
+            return true;
+        }
     }
+    navigator.current = start;
+    false
 }
 
-fn on_navigate_next(
+fn on_navigate(
+    forward: bool,
     navigator: &mut Navigator,
     image: &mut ImageHolder,
     viewport: &mut ViewportState,
 ) -> EventOutcome {
-    let path = navigator.next().to_path_buf();
-    let success = navigate_to(path, image, viewport);
+    let success = show_loadable(navigator, forward, false, image, viewport);
     EventOutcome {
         dirty: success,
         navigated: success,
@@ -283,20 +301,20 @@ fn on_delete_file(
     match std::fs::remove_file(&path) {
         Ok(()) => {
             info!(path = %path.display(), "deleted file");
-            match navigator.remove_current() {
-                Some(next) => {
-                    let next = next.to_path_buf();
-                    let success = navigate_to(next, image, viewport);
-                    EventOutcome {
-                        dirty: success,
-                        navigated: success,
-                        ..Default::default()
-                    }
+            if navigator.remove_current().is_some()
+                && show_loadable(navigator, true, true, image, viewport)
+            {
+                EventOutcome {
+                    dirty: true,
+                    navigated: true,
+                    ..Default::default()
                 }
-                None => EventOutcome {
+            } else {
+                // Nothing left that can be shown.
+                EventOutcome {
                     quit: true,
                     ..Default::default()
-                },
+                }
             }
         }
         Err(e) => {
@@ -344,9 +362,9 @@ fn on_key_action(
     viewport: &mut ViewportState,
 ) -> EventOutcome {
     if sym == settings.key_left {
-        on_navigate_prev(navigator, image, viewport)
+        on_navigate(false, navigator, image, viewport)
     } else if sym == settings.key_right {
-        on_navigate_next(navigator, image, viewport)
+        on_navigate(true, navigator, image, viewport)
     } else if let Some(action) = settings.keybind_map.lookup(sym) {
         match action {
             Action::Quit => EventOutcome {
@@ -399,10 +417,12 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     let mut gpu_ctx = GpuContext::new()?;
 
     let mut navigator = Navigator::from_paths(&settings.paths)?;
-    let mut image = load_image(navigator.current())?;
-    info!(path = %navigator.current().display(), "loaded first image");
-
+    let mut image = ImageHolder::Static(DynamicImage::new_rgba8(1, 1));
     let mut viewport = ViewportState::default();
+    if !show_loadable(&mut navigator, true, true, &mut image, &mut viewport) {
+        return Err("none of the given images could be loaded".into());
+    }
+
     let mut wayland = WaylandContext::connect((800, 600), settings.decorations)?;
 
     // dmabuf: init GPU context after surface is created, using Wayland handles.
