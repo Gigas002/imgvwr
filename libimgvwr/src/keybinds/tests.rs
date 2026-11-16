@@ -43,3 +43,26 @@ fn keybind_map_unknown_sym_returns_none() {
     let unbound = keysym_from_str("z").unwrap();
     assert_eq!(map.lookup(unbound), None);
 }
+
+#[test]
+fn keysym_from_str_accepts_single_characters() {
+    // "[" is not an XKB keysym name, but it is the character on the key.
+    assert_eq!(
+        keysym_from_str("[").unwrap(),
+        keysym_from_str("bracketleft").unwrap()
+    );
+    assert_eq!(
+        keysym_from_str("=").unwrap(),
+        keysym_from_str("equal").unwrap()
+    );
+    assert_eq!(
+        keysym_from_str("ä").unwrap(),
+        keysym_from_str("adiaeresis").unwrap()
+    );
+}
+
+#[test]
+fn keysym_from_str_rejects_empty_and_long_garbage() {
+    assert!(keysym_from_str("").is_err());
+    assert!(keysym_from_str("[[").is_err());
+}
