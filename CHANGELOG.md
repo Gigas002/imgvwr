@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.0] - 2026-11-17
+## [1.2.0] - Unreleased
 
 libimgvwr API changes: `WaylandContext::dispatch` takes an `Option<Duration>` timeout, and `InputEvent::Scroll` carries wheel notches instead of raw axis units.
 
