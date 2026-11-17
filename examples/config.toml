@@ -6,8 +6,8 @@
 # Show the window title bar (requires feature "decorations").
 decorations = false
 
-# Apply high-quality resampling when scaling images.
-# Set to true to enable filtering at all zoom levels (slower).
+# Resample with `filter_method` when scaling. When false, images are always
+# scaled with "nearest" (sharp pixels, fastest).
 antialiasing = false
 
 # ── Viewer ────────────────────────────────────────────────────────────────────
@@ -19,16 +19,20 @@ min_scale = 0.1
 max_scale = 100.0
 
 # Zoom step per scroll notch as a fraction of the current scale (multiplicative).
-# 0.1 = 10 % per notch — raise for faster zoom, lower for finer control.
-scale_step = 0.1
+# 0.08 = 8 % per notch — raise for faster zoom, lower for finer control.
+# Must be between 0 and 1.
+scale_step = 0.08
 
-# Resampling filter used when scaling images.
+# Resampling filter used when scaling images; only used with antialiasing = true.
 # Options: "nearest" | "triangle" | "catmull_rom" | "gaussian" | "lanczos3"
-#   nearest    — fastest, pixelated at large zoom
-#   triangle   — bilinear, good balance of speed and quality
+#   nearest     — fastest, pixelated at large zoom (default)
+#   triangle    — bilinear, good balance of speed and quality
 #   catmull_rom — bicubic, sharper than triangle
-#   gaussian   — soft/blurry, rarely preferred
-#   lanczos3   — best quality, slowest (default)
+#   gaussian    — soft/blurry, rarely preferred
+#   lanczos3    — best quality, slowest on the CPU renderer
+# The GPU renderers sample with vello, which offers nearest, bilinear and
+# bicubic: "nearest" stays nearest, "triangle" and "gaussian" are bilinear,
+# "catmull_rom" and "lanczos3" bicubic.
 filter_method = "nearest"
 
 # ── Keybindings ───────────────────────────────────────────────────────────────
