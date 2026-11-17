@@ -18,6 +18,119 @@ fn argb_at(buf: &[u8], dst_w: u32, x: u32, y: u32) -> (u8, u8, u8, u8) {
 mod cpu {
     use super::*;
 
+    /// The renderer before visible-region rendering: resize the whole image,
+    /// rotate it, then blit. The fast path must produce the same pixels.
+    fn reference_render(
+        src: &DynamicImage,
+        viewport: &ViewportState,
+        dst_w: u32,
+        dst_h: u32,
+        filter: FilterMethod,
+    ) -> Vec<u8> {
+        let scaled_w = ((src.width() as f32) * viewport.scale).max(1.0) as u32;
+        let scaled_h = ((src.height() as f32) * viewport.scale).max(1.0) as u32;
+        let scaled = image::imageops::resize(src, scaled_w, scaled_h, filter.into());
+        let rotated = match viewport.rotation {
+            90 => image::imageops::rotate90(&scaled),
+            180 => image::imageops::rotate180(&scaled),
+            270 => image::imageops::rotate270(&scaled),
+            _ => scaled,
+        };
+        let blit_x = (dst_w as i32 / 2) - (rotated.width() as i32 / 2) + viewport.offset.0 as i32;
+        let blit_y = (dst_h as i32 / 2) - (rotated.height() as i32 / 2) + viewport.offset.1 as i32;
+        let mut buf = vec![0u8; (dst_w * dst_h * 4) as usize];
+        for (sx, sy, Rgba([r, g, b, a])) in rotated.enumerate_pixels() {
+            let (dx, dy) = (blit_x + sx as i32, blit_y + sy as i32);
+            if dx < 0 || dy < 0 || dx >= dst_w as i32 || dy >= dst_h as i32 {
+                continue;
+            }
+            let i = (dy as u32 * dst_w + dx as u32) as usize * 4;
+            buf[i..i + 4].copy_from_slice(&[*b, *g, *r, *a]);
+        }
+        buf
+    }
+
+    /// A deterministic, non-uniform test image.
+    fn noise(w: u32, h: u32) -> DynamicImage {
+        let mut state = 0x2545_f491_u32;
+        DynamicImage::ImageRgba8(ImageBuffer::from_fn(w, h, |_, _| {
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                (state >> 24) as u8
+            };
+            Rgba([next(), next(), next(), next() | 0x80])
+        }))
+    }
+
+    #[test]
+    fn matches_full_resize_for_every_view() {
+        let src = noise(37, 23);
+        let filters = [
+            FilterMethod::Nearest,
+            FilterMethod::Triangle,
+            FilterMethod::CatmullRom,
+            FilterMethod::Gaussian,
+            FilterMethod::Lanczos3,
+        ];
+        for scale in [0.31, 0.77, 1.0, 1.6, 3.3, 7.0] {
+            for rotation in [0, 90, 180, 270] {
+                for offset in [(0.0, 0.0), (-50.0, 13.0), (61.0, -40.0), (500.0, 0.0)] {
+                    for filter in filters {
+                        let vp = ViewportState {
+                            scale,
+                            offset,
+                            rotation,
+                        };
+                        let got = render(&src, &vp, 64, 48, filter);
+                        let want = reference_render(&src, &vp, 64, 48, filter);
+                        assert!(
+                            got == want,
+                            "scale {scale} rotation {rotation} offset {offset:?} {filter:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deep_zoom_does_not_allocate_the_whole_scaled_image() {
+        // 4000 × 3000 at 100× would be a 480 GB buffer if scaled in full.
+        let src = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            4000,
+            3000,
+            Rgba([10u8, 200, 30, 255]),
+        ));
+        let vp = ViewportState {
+            scale: 100.0,
+            offset: (0.0, 0.0),
+            rotation: 90,
+        };
+        let buf = render(&src, &vp, 320, 200, FilterMethod::Lanczos3);
+        assert_eq!(argb_at(&buf, 320, 160, 100), (10, 200, 30, 255));
+        assert_eq!(argb_at(&buf, 320, 0, 0), (10, 200, 30, 255));
+    }
+
+    #[test]
+    fn panning_reuses_the_zoomed_out_image() {
+        let src = noise(300, 200);
+        let mut vp = ViewportState {
+            scale: 0.5,
+            offset: (0.0, 0.0),
+            rotation: 0,
+        };
+        let first = render(&src, &vp, 100, 80, FilterMethod::Triangle);
+        vp.pan(7.0, -3.0);
+        let panned = render(&src, &vp, 100, 80, FilterMethod::Triangle);
+        assert_ne!(first, panned);
+        assert_eq!(
+            panned,
+            reference_render(&src, &vp, 100, 80, FilterMethod::Triangle)
+        );
+    }
+
     #[test]
     fn centre_pixels_are_red_argb() {
         let src = red_4x4();
@@ -102,8 +215,42 @@ mod gpu {
     fn level_size_halves_and_never_reaches_zero() {
         assert_eq!(level_size(100, 50, 0), (100, 50));
         assert_eq!(level_size(100, 50, 1), (50, 25));
-        assert_eq!(level_size(100, 50, 6), (1, 1));
+        assert_eq!(level_size(100, 50, 6), (2, 1));
         assert_eq!(level_size(100, 50, 40), (1, 1));
+    }
+
+    #[test]
+    fn level_size_matches_the_levels_halve_builds() {
+        // Odd sides round up; flooring them made the level and the size the
+        // transform assumed disagree (and tripped a debug assertion).
+        let (mut w, mut h) = (6001u32, 3999u32);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for level in 1..=4 {
+            let next = halve(&data, w, h, FilterMethod::Triangle);
+            (w, h) = next.dimensions();
+            assert_eq!(level_size(6001, 3999, level), (w, h), "level {level}");
+            data = next.into_raw();
+        }
+    }
+
+    #[test]
+    fn halve_averages_blocks_and_repeats_odd_edges() {
+        // 3×1: [0, 100, 200] → [avg(0,100), 200]
+        let px = |v: u8| [v, v, v, 255];
+        let src: Vec<u8> = [px(0), px(100), px(200)].concat();
+        let out = halve(&src, 3, 1, FilterMethod::Lanczos3);
+        assert_eq!(out.dimensions(), (2, 1));
+        assert_eq!(out.get_pixel(0, 0).0, [50, 50, 50, 255]);
+        assert_eq!(out.get_pixel(1, 0).0, [200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn halve_keeps_hard_pixels_for_nearest() {
+        let px = |v: u8| [v, v, v, 255];
+        let src: Vec<u8> = [px(0), px(100), px(200), px(255)].concat();
+        let out = halve(&src, 2, 2, FilterMethod::Nearest);
+        assert_eq!(out.dimensions(), (1, 1));
+        assert_eq!(out.get_pixel(0, 0).0, [0, 0, 0, 255]);
     }
 
     #[test]

@@ -63,19 +63,45 @@ A minimal, fast image viewer for Wayland, written in Rust.
 imgvwr [OPTIONS] [PATHS]...
 ```
 
-Open one or more image files:
+Open one or more image files or directories:
 
 ```sh
 imgvwr image.png
 imgvwr *.jpg
 imgvwr ~/pictures/**/*.webp
+imgvwr ~/pictures/
 ```
+
+A single file opens with the other images of its directory available for
+browsing, starting at that file. Several paths are browsed in the given
+order; a directory contributes the images it contains. Files that fail to
+load are skipped.
+
+Each image is scaled to fit the window, and refitted when the window or
+rotation changes, until you zoom or pan.
+
+### Mouse
+
+| Input            | Action                                                |
+| ---------------- | ----------------------------------------------------- |
+| Wheel            | Zoom by `scale_step` per notch, around the pointer    |
+| Left-button drag | Pan                                                   |
+
+### Configuration
+
+Settings are read from `/etc/imgvwr/config.toml`, then
+`$XDG_CONFIG_HOME/imgvwr/config.toml` (or `~/.config/imgvwr/config.toml`),
+then the file given with `--config`; later files override earlier ones and
+command-line options override all of them. See
+[`examples/config.toml`](examples/config.toml) for every key with its default.
+Unknown keys and invalid values are reported on start-up (and replaced by the
+default) instead of being silently ignored.
 
 ### CLI options
 
 | Option                             | Description                                                                  |
 | ---------------------------------- | ---------------------------------------------------------------------------- |
-| `[PATHS]...`                       | One or more image file paths to open                                         |
+| `[PATHS]...`                       | Image files or directories to open                                           |
 | `--config <PATH>`                  | Load an additional config file (layered on top of system/user config)        |
 | `-d, --decorations [true\|false]`  | Override window decoration setting                                           |
 | `-a, --antialiasing [true\|false]` | Override antialiasing setting                                                |
@@ -88,12 +114,17 @@ imgvwr ~/pictures/**/*.webp
 
 ### Default keybindings
 
-| Key      | Action                                    |
-| -------- | ----------------------------------------- |
-| `q`      | Quit                                      |
-| `[`      | Rotate 90° counter-clockwise              |
-| `]`      | Rotate 90° clockwise                      |
-| `Delete` | Delete current file from disk and advance |
+| Key      | Action                                                     |
+| -------- | ---------------------------------------------------------- |
+| `q`      | Quit                                                       |
+| `Left`   | Previous image                                             |
+| `Right`  | Next image                                                 |
+| `[`      | Rotate 90° counter-clockwise                               |
+| `]`      | Rotate 90° clockwise                                       |
+| `Delete` | Delete the shown file from disk (permanently) and advance  |
+
+`q`, `[`, `]` and `Delete` can be rebound in the `[keybindings]` section of
+the config (feature `keybinds`).
 
 ---
 

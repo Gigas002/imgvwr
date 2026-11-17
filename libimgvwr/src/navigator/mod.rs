@@ -24,41 +24,71 @@ pub struct Navigator {
 impl Navigator {
     /// Build a [`Navigator`] from a file or directory path.
     ///
-    /// - If `p` is a **file**: scans its parent directory; sets the cursor to
-    ///   `p`'s position in the sorted list.
+    /// - If `p` is a **file**: scans its directory (the current one for a bare
+    ///   file name) and starts at `p`. `p` is listed even when its extension
+    ///   is not one the scan recognises, since the user asked for it.
     /// - If `p` is a **directory**: scans it; cursor starts at index `0`.
     ///
     /// Returns an error if the directory cannot be read or contains no
     /// supported image files.
     pub fn from_path(p: &Path) -> io::Result<Navigator> {
-        let (dir, start_file) = if p.is_dir() {
-            (p.to_path_buf(), None)
-        } else {
-            let parent = p.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
-            })?;
-            (parent.to_path_buf(), Some(p.to_path_buf()))
+        if p.is_dir() {
+            return Self::from_list(scan_dir(p)?, 0);
+        }
+
+        // A missing file is an error, not a cue to show its neighbours.
+        std::fs::metadata(p).map_err(|e| with_path(p, e))?;
+        let dir = parent_dir(p);
+        let mut paths = scan_dir(dir)?;
+        let name = p
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+        let current = match paths.iter().position(|q| q.file_name() == Some(name)) {
+            Some(i) => i,
+            None => {
+                let file = dir.join(name);
+                let i = paths.partition_point(|q| q.file_name() < Some(name));
+                paths.insert(i, file);
+                i
+            }
         };
+        Self::from_list(paths, current)
+    }
 
-        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| is_supported(p))
-            .collect();
+    /// Build a [`Navigator`] from command-line paths.
+    ///
+    /// A single path behaves like [`Navigator::from_path`]. Several paths are
+    /// browsed in the order given, each directory contributing its supported
+    /// images, and the cursor starts at the first.
+    pub fn from_paths(paths: &[PathBuf]) -> io::Result<Navigator> {
+        match paths {
+            [] => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no image paths given",
+            )),
+            [one] => Self::from_path(one),
+            many => {
+                let mut list = Vec::new();
+                for p in many {
+                    if p.is_dir() {
+                        list.extend(scan_dir(p)?);
+                    } else {
+                        std::fs::metadata(p).map_err(|e| with_path(p, e))?;
+                        list.push(p.clone());
+                    }
+                }
+                Self::from_list(list, 0)
+            }
+        }
+    }
 
-        paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
+    fn from_list(paths: Vec<PathBuf>, current: usize) -> io::Result<Navigator> {
         if paths.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "no supported images found",
             ));
         }
-
-        let current = start_file
-            .and_then(|f| paths.iter().position(|p| p == &f))
-            .unwrap_or(0);
-
         Ok(Navigator { paths, current })
     }
 
@@ -93,6 +123,31 @@ impl Navigator {
         self.current = self.current.checked_sub(1).unwrap_or(self.paths.len() - 1);
         &self.paths[self.current]
     }
+}
+
+/// `e` with `path` in front, so the message says which file it is about.
+fn with_path(path: &Path, e: io::Error) -> io::Error {
+    io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+}
+
+/// Directory holding `p`; `.` for a bare file name.
+fn parent_dir(p: &Path) -> &Path {
+    match p.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    }
+}
+
+/// Supported images in `dir`, sorted by file name.
+fn scan_dir(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| with_path(dir, e))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| is_supported(p))
+        .collect();
+    paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    Ok(paths)
 }
 
 fn is_supported(path: &Path) -> bool {

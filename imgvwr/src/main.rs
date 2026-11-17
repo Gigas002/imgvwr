@@ -6,21 +6,41 @@ mod config;
 mod logger;
 mod settings;
 
+use std::process::ExitCode;
+
 use clap::Parser;
 use config::Config;
 use settings::AppSettings;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
     let cli = cli::Cli::parse();
 
     #[cfg(feature = "completions")]
     if let Some(shell) = cli.completions {
         completions::generate_completions(shell);
-        return Ok(());
+        return ExitCode::SUCCESS;
     }
 
-    let config = Config::load_merged(cli.config.as_deref());
-    let settings = AppSettings::resolve(&cli, &config);
+    let mut problems = Vec::new();
+    let config = match Config::load_merged(cli.config.as_deref(), &mut problems) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("imgvwr: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let settings = AppSettings::resolve(&cli, &config, &mut problems);
     logger::init(&settings.log_level);
-    app::run(settings)
+    // Found before logging could be set up from the config.
+    for problem in &problems {
+        tracing::warn!("{problem}");
+    }
+    match app::run(settings) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            // Printed directly: logging may be compiled out or filtered.
+            eprintln!("imgvwr: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

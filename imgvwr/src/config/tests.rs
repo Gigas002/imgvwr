@@ -132,3 +132,45 @@ fn get_home_path_uses_home() {
         std::path::PathBuf::from("/tmp/home/.config/imgvwr/config.toml")
     );
 }
+
+fn write_config(content: &str) -> tempfile::NamedTempFile {
+    use std::io::Write;
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(content.as_bytes()).unwrap();
+    file
+}
+
+#[test]
+fn load_reports_unknown_keys_with_their_path() {
+    let file = write_config("[viewer]\nscale_stepp = 0.2\n[windows]\ndecorations = true\n");
+    let mut problems = Vec::new();
+    Config::load(file.path(), &mut problems).unwrap();
+    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(problems[0].contains("`viewer.scale_stepp`"), "{problems:?}");
+    assert!(problems[1].contains("`windows`"), "{problems:?}");
+}
+
+#[test]
+fn load_fails_on_wrong_types() {
+    let file = write_config("[viewer]\nscale_step = \"fast\"\n");
+    assert!(Config::load(file.path(), &mut Vec::new()).is_err());
+}
+
+#[test]
+fn an_unusable_override_is_an_error() {
+    let missing = std::path::Path::new("/nonexistent/imgvwr.toml");
+    let err = Config::load_merged(Some(missing), &mut Vec::new()).unwrap_err();
+    assert!(err.contains("/nonexistent/imgvwr.toml"), "{err}");
+
+    let broken = write_config("[viewer\n");
+    let err = Config::load_merged(Some(broken.path()), &mut Vec::new()).unwrap_err();
+    assert!(err.contains("TOML parse error"), "{err}");
+}
+
+#[test]
+fn the_shipped_example_has_no_unknown_keys() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.toml");
+    let mut problems = Vec::new();
+    Config::load(&path, &mut problems).unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+}

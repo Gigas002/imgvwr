@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 #[cfg(any(
     feature = "gif",
     feature = "avif-anim",
@@ -10,7 +11,6 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "decorations")]
 use std::path::Path;
 
 use image::DynamicImage;
@@ -26,6 +26,9 @@ use libimgvwr::{
 };
 
 use crate::settings::AppSettings;
+
+#[cfg(test)]
+mod tests;
 
 /// Holds either a static single image or an animated sequence of frames.
 enum ImageHolder {
@@ -81,11 +84,32 @@ impl ImageHolder {
             if now >= *next_at {
                 *current = (*current + 1) % frames.len();
                 let delay = frames[*current].1;
-                *next_at = now + delay;
+                // Keep the animation's own clock; only resync after a stall.
+                *next_at += delay;
+                if *next_at <= now {
+                    *next_at = now + delay;
+                }
                 return true;
             }
         }
         false
+    }
+
+    /// Time until the next animation frame is due; `None` for a still image.
+    fn next_frame_in(&self) -> Option<Duration> {
+        match self {
+            Self::Static(_) => None,
+            #[cfg(any(
+                feature = "gif",
+                feature = "avif-anim",
+                feature = "jxl-anim",
+                feature = "webp-anim",
+                feature = "apng"
+            ))]
+            Self::Animated { next_at, .. } => {
+                Some(next_at.saturating_duration_since(Instant::now()))
+            }
+        }
     }
 }
 
@@ -94,9 +118,10 @@ struct EventOutcome {
     dirty: bool,
     quit: bool,
     navigated: bool,
+    /// The user zoomed or panned, so the view no longer follows the window.
+    unfit: bool,
 }
 
-#[cfg(feature = "decorations")]
 fn make_title(path: &Path) -> String {
     let name = path
         .file_name()
@@ -105,9 +130,20 @@ fn make_title(path: &Path) -> String {
     format!("{name} — imgvwr")
 }
 
-fn fit_scale(img: &DynamicImage, window: (u32, u32), min_scale: f32, max_scale: f32) -> f32 {
-    let sw = window.0 as f32 / img.width() as f32;
-    let sh = window.1 as f32 / img.height() as f32;
+/// Scale at which `img`, rotated by `rotation`, fits inside `window`.
+fn fit_scale(
+    img: &DynamicImage,
+    rotation: u16,
+    window: (u32, u32),
+    min_scale: f32,
+    max_scale: f32,
+) -> f32 {
+    let (w, h) = match rotation {
+        90 | 270 => (img.height(), img.width()),
+        _ => (img.width(), img.height()),
+    };
+    let sw = window.0 as f32 / w.max(1) as f32;
+    let sh = window.1 as f32 / h.max(1) as f32;
     sw.min(sh).clamp(min_scale, max_scale)
 }
 
@@ -190,31 +226,49 @@ fn navigate_to(path: PathBuf, image: &mut ImageHolder, viewport: &mut ViewportSt
     }
 }
 
-fn on_navigate_prev(
+/// Show the first entry that loads, walking the list `forward` or back from
+/// the cursor: from the cursor itself when `try_current`, else from the next
+/// entry. Every entry is tried at most once, and the one on screen is not
+/// reloaded. When nothing loads, the cursor goes back to where it was, so it
+/// always names the image on screen (the one Delete removes).
+fn show_loadable(
     navigator: &mut Navigator,
+    forward: bool,
+    try_current: bool,
     image: &mut ImageHolder,
     viewport: &mut ViewportState,
-) -> EventOutcome {
-    let path = navigator.prev().to_path_buf();
-    let success = navigate_to(path, image, viewport);
-    EventOutcome {
-        dirty: success,
-        navigated: success,
-        quit: false,
+) -> bool {
+    let start = navigator.current;
+    for attempt in 0..navigator.paths.len() {
+        if attempt > 0 || !try_current {
+            if forward {
+                navigator.next();
+            } else {
+                navigator.prev();
+            }
+            if !try_current && navigator.current == start {
+                break;
+            }
+        }
+        if navigate_to(navigator.current().to_path_buf(), image, viewport) {
+            return true;
+        }
     }
+    navigator.current = start;
+    false
 }
 
-fn on_navigate_next(
+fn on_navigate(
+    forward: bool,
     navigator: &mut Navigator,
     image: &mut ImageHolder,
     viewport: &mut ViewportState,
 ) -> EventOutcome {
-    let path = navigator.next().to_path_buf();
-    let success = navigate_to(path, image, viewport);
+    let success = show_loadable(navigator, forward, false, image, viewport);
     EventOutcome {
         dirty: success,
         navigated: success,
-        quit: false,
+        ..Default::default()
     }
 }
 
@@ -245,20 +299,20 @@ fn on_delete_file(
     match std::fs::remove_file(&path) {
         Ok(()) => {
             info!(path = %path.display(), "deleted file");
-            match navigator.remove_current() {
-                Some(next) => {
-                    let next = next.to_path_buf();
-                    let success = navigate_to(next, image, viewport);
-                    EventOutcome {
-                        dirty: success,
-                        navigated: success,
-                        quit: false,
-                    }
+            if navigator.remove_current().is_some()
+                && show_loadable(navigator, true, true, image, viewport)
+            {
+                EventOutcome {
+                    dirty: true,
+                    navigated: true,
+                    ..Default::default()
                 }
-                None => EventOutcome {
+            } else {
+                // Nothing left that can be shown.
+                EventOutcome {
                     quit: true,
                     ..Default::default()
-                },
+                }
             }
         }
         Err(e) => {
@@ -284,6 +338,7 @@ fn on_scroll(
     );
     EventOutcome {
         dirty: true,
+        unfit: true,
         ..Default::default()
     }
 }
@@ -292,6 +347,7 @@ fn on_pointer_motion(dx: f32, dy: f32, viewport: &mut ViewportState) -> EventOut
     viewport.pan(dx, dy);
     EventOutcome {
         dirty: true,
+        unfit: true,
         ..Default::default()
     }
 }
@@ -304,9 +360,9 @@ fn on_key_action(
     viewport: &mut ViewportState,
 ) -> EventOutcome {
     if sym == settings.key_left {
-        on_navigate_prev(navigator, image, viewport)
+        on_navigate(false, navigator, image, viewport)
     } else if sym == settings.key_right {
-        on_navigate_next(navigator, image, viewport)
+        on_navigate(true, navigator, image, viewport)
     } else if let Some(action) = settings.keybind_map.lookup(sym) {
         match action {
             Action::Quit => EventOutcome {
@@ -358,11 +414,13 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     ))]
     let mut gpu_ctx = GpuContext::new()?;
 
-    let mut navigator = Navigator::from_path(&settings.paths[0])?;
-    let mut image = load_image(navigator.current())?;
-    info!(path = %navigator.current().display(), "loaded first image");
-
+    let mut navigator = Navigator::from_paths(&settings.paths)?;
+    let mut image = ImageHolder::Static(DynamicImage::new_rgba8(1, 1));
     let mut viewport = ViewportState::default();
+    if !show_loadable(&mut navigator, true, true, &mut image, &mut viewport) {
+        return Err("none of the given images could be loaded".into());
+    }
+
     let mut wayland = WaylandContext::connect((800, 600), settings.decorations)?;
 
     // dmabuf: init GPU context after surface is created, using Wayland handles.
@@ -374,23 +432,30 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "dmabuf")]
     let mut last_surface_size = wayland.state.window_size;
 
-    viewport.scale = fit_scale(
-        image.current(),
-        wayland.state.window_size,
-        settings.min_scale,
-        settings.max_scale,
-    );
+    // The image follows the window size until the user zooms or pans.
+    let mut fitted = true;
 
-    #[cfg(feature = "decorations")]
-    if settings.decorations {
-        wayland.set_title(&make_title(navigator.current()));
-    }
+    wayland.set_title(&make_title(navigator.current()));
+
+    // A frame is owed but the compositor has not asked for one yet.
+    let mut redraw_pending = false;
 
     loop {
-        wayland.dispatch(16)?;
+        let timeout = if wayland.state.needs_redraw || redraw_pending {
+            // Draw right away if the compositor wants a frame, else sleep
+            // until its frame callback (never, while the window is hidden).
+            if wayland.ready_for_frame() {
+                Some(Duration::ZERO)
+            } else {
+                None
+            }
+        } else {
+            image.next_frame_in()
+        };
+        wayland.dispatch(timeout)?;
 
         let events: Vec<InputEvent> = std::mem::take(&mut wayland.state.pending_events);
-        let mut dirty = wayland.state.needs_redraw;
+        let mut dirty = wayland.state.needs_redraw || redraw_pending;
         wayland.state.needs_redraw = false;
         let mut any_navigated = false;
 
@@ -407,28 +472,36 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
             );
             dirty |= outcome.dirty;
             any_navigated |= outcome.navigated;
+            if outcome.navigated {
+                fitted = true;
+            } else if outcome.unfit {
+                fitted = false;
+            }
             if outcome.quit {
                 wayland.state.closed = true;
             }
         }
 
         if any_navigated {
-            viewport.scale = fit_scale(
-                image.current(),
-                wayland.state.window_size,
-                settings.min_scale,
-                settings.max_scale,
-            );
             dirty = true;
 
-            #[cfg(feature = "decorations")]
-            if settings.decorations {
-                wayland.set_title(&make_title(navigator.current()));
-            }
+            wayland.set_title(&make_title(navigator.current()));
         }
 
-        if dirty {
+        redraw_pending = dirty && !wayland.ready_for_frame();
+        if dirty && !redraw_pending {
+            let frame_start = std::time::Instant::now();
             let (w, h) = wayland.state.window_size;
+            if fitted {
+                viewport.scale = fit_scale(
+                    image.current(),
+                    viewport.rotation,
+                    (w, h),
+                    settings.min_scale,
+                    settings.max_scale,
+                );
+                viewport.offset = (0.0, 0.0);
+            }
             let effective_filter = if settings.antialiasing {
                 settings.filter
             } else {
@@ -457,6 +530,13 @@ pub fn run(settings: AppSettings) -> Result<(), Box<dyn std::error::Error>> {
                 );
                 wayland.commit_frame(&pixels, w, h)?;
             }
+
+            debug!(
+                ms = frame_start.elapsed().as_secs_f64() * 1000.0,
+                scale = viewport.scale,
+                offset = ?viewport.offset,
+                "frame"
+            );
         }
 
         if wayland.state.closed {

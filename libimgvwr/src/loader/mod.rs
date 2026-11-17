@@ -179,6 +179,7 @@ fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
 
     let basic_info = decoder.basic_info().ok_or(LoadError::UnsupportedFormat)?;
     let (width, height) = basic_info.size;
+    let stride = rgba_stride(width, height, MAX_IMAGE_BYTES)?;
     let num_extra = basic_info.extra_channels.len();
     decoder
         .set_pixel_format(JxlPixelFormat::rgba8(num_extra))
@@ -194,7 +195,6 @@ fn load_jxl(path: &Path) -> Result<DynamicImage, LoadError> {
     }
 
     // Phase 3 — decode first frame into an RGBA u8 buffer
-    let stride = width * 4;
     let mut pixel_buf = vec![0u8; height * stride];
     loop {
         let mut out = [JxlOutputBuffer::new(&mut pixel_buf, height, stride)];
@@ -228,6 +228,120 @@ pub struct AnimFrames {
     pub frames: Vec<(DynamicImage, Duration)>,
 }
 
+/// Most memory all decoded frames of one animation may take together.
+///
+/// Every frame is kept as full-canvas RGBA8, so a small file can describe
+/// gigabytes: a 2 MB GIF of forty 8000×8000 frames decodes to 9.5 GiB.
+/// Beyond this budget only the first frame is shown.
+pub const MAX_ANIMATION_BYTES: usize = 1 << 30;
+
+/// Largest single image the decoders may allocate; matches `image`'s
+/// default allocation limit.
+pub const MAX_IMAGE_BYTES: usize = 512 << 20;
+
+/// Counts decoded frame bytes against [`MAX_ANIMATION_BYTES`].
+#[cfg(any(
+    feature = "gif",
+    feature = "avif-anim",
+    feature = "jxl-anim",
+    feature = "webp-anim",
+    feature = "apng"
+))]
+struct FrameBudget {
+    used: usize,
+    limit: usize,
+}
+
+#[cfg(any(
+    feature = "gif",
+    feature = "avif-anim",
+    feature = "jxl-anim",
+    feature = "webp-anim",
+    feature = "apng"
+))]
+impl Default for FrameBudget {
+    fn default() -> Self {
+        Self::with_limit(MAX_ANIMATION_BYTES)
+    }
+}
+
+#[cfg(any(
+    feature = "gif",
+    feature = "avif-anim",
+    feature = "jxl-anim",
+    feature = "webp-anim",
+    feature = "apng"
+))]
+impl FrameBudget {
+    fn with_limit(limit: usize) -> Self {
+        Self { used: 0, limit }
+    }
+
+    /// Account for a `w × h` RGBA8 frame; false once over budget.
+    fn admit(&mut self, w: u32, h: u32) -> bool {
+        self.used = self
+            .used
+            .saturating_add((w as usize).saturating_mul(h as usize).saturating_mul(4));
+        self.used <= self.limit
+    }
+}
+
+/// Drop all frames but the first once an animation is over budget.
+#[cfg(any(
+    feature = "gif",
+    feature = "avif-anim",
+    feature = "jxl-anim",
+    feature = "webp-anim",
+    feature = "apng"
+))]
+fn first_frame_only(path: &Path, mut frames: Vec<(DynamicImage, Duration)>) -> AnimFrames {
+    tracing::warn!(
+        path = %path.display(),
+        limit_mib = MAX_ANIMATION_BYTES >> 20,
+        "animation too large to keep in memory; showing its first frame"
+    );
+    frames.truncate(1);
+    AnimFrames { frames }
+}
+
+/// Decode the frames of an `image` animation within the frame budget.
+#[cfg(any(feature = "gif", feature = "webp-anim", feature = "apng"))]
+fn collect_budgeted(
+    path: &Path,
+    frames: image::Frames<'_>,
+    mut budget: FrameBudget,
+) -> Result<AnimFrames, LoadError> {
+    let mut out = Vec::new();
+    for frame in frames {
+        let frame = frame.map_err(|e| match e {
+            ImageError::IoError(io_err) => LoadError::Io(io_err),
+            other => LoadError::Decode(other),
+        })?;
+        let (numer, denom) = frame.delay().numer_denom_ms();
+        let ms = if denom == 0 {
+            10
+        } else {
+            (numer as u64 / denom as u64).max(10)
+        };
+        let buffer = frame.into_buffer();
+        let over = !budget.admit(buffer.width(), buffer.height());
+        if over && !out.is_empty() {
+            return Ok(first_frame_only(path, out));
+        }
+        out.push((DynamicImage::ImageRgba8(buffer), Duration::from_millis(ms)));
+    }
+    Ok(AnimFrames { frames: out })
+}
+
+/// An error for an image whose decoded pixels would exceed `limit` bytes.
+#[cfg(feature = "jxl")]
+fn too_large() -> LoadError {
+    use image::error::{LimitError, LimitErrorKind};
+    LoadError::Decode(ImageError::Limits(LimitError::from_kind(
+        LimitErrorKind::InsufficientMemory,
+    )))
+}
+
 /// Load an animated GIF from `path`, returning all frames with their display durations.
 ///
 /// Frames with a zero delay are clamped to 10 ms (browser convention).
@@ -245,30 +359,7 @@ pub fn load_gif_frames(path: &Path) -> Result<AnimFrames, LoadError> {
         other => LoadError::Decode(other),
     })?;
 
-    let raw_frames = decoder
-        .into_frames()
-        .collect_frames()
-        .map_err(|e| match e {
-            ImageError::IoError(io_err) => LoadError::Io(io_err),
-            other => LoadError::Decode(other),
-        })?;
-
-    let frames = raw_frames
-        .into_iter()
-        .map(|frame: image::Frame| {
-            let (numer, denom) = frame.delay().numer_denom_ms();
-            let ms = if denom == 0 {
-                10
-            } else {
-                (numer as u64 / denom as u64).max(10)
-            };
-            let duration = Duration::from_millis(ms);
-            let img = DynamicImage::ImageRgba8(frame.into_buffer());
-            (img, duration)
-        })
-        .collect();
-
-    Ok(AnimFrames { frames })
+    collect_budgeted(path, decoder.into_frames(), FrameBudget::default())
 }
 
 /// Load an animated WebP from `path`, returning all frames with their display durations.
@@ -292,30 +383,7 @@ pub fn load_webp_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
         return Err(LoadError::UnsupportedFormat);
     }
 
-    let raw_frames = decoder
-        .into_frames()
-        .collect_frames()
-        .map_err(|e| match e {
-            ImageError::IoError(io_err) => LoadError::Io(io_err),
-            other => LoadError::Decode(other),
-        })?;
-
-    let frames = raw_frames
-        .into_iter()
-        .map(|frame: image::Frame| {
-            let (numer, denom) = frame.delay().numer_denom_ms();
-            let ms = if denom == 0 {
-                10
-            } else {
-                (numer as u64 / denom as u64).max(10)
-            };
-            let duration = Duration::from_millis(ms);
-            let img = DynamicImage::ImageRgba8(frame.into_buffer());
-            (img, duration)
-        })
-        .collect();
-
-    Ok(AnimFrames { frames })
+    collect_budgeted(path, decoder.into_frames(), FrameBudget::default())
 }
 
 /// Load an animated PNG (APNG) from `path`, returning all frames with their display durations.
@@ -349,27 +417,7 @@ pub fn load_apng_frames(path: &Path) -> Result<AnimFrames, LoadError> {
         other => LoadError::Decode(other),
     })?;
 
-    let raw_frames = apng.into_frames().collect_frames().map_err(|e| match e {
-        ImageError::IoError(io_err) => LoadError::Io(io_err),
-        other => LoadError::Decode(other),
-    })?;
-
-    let frames = raw_frames
-        .into_iter()
-        .map(|frame: image::Frame| {
-            let (numer, denom) = frame.delay().numer_denom_ms();
-            let ms = if denom == 0 {
-                10
-            } else {
-                (numer as u64 / denom as u64).max(10)
-            };
-            let duration = Duration::from_millis(ms);
-            let img = DynamicImage::ImageRgba8(frame.into_buffer());
-            (img, duration)
-        })
-        .collect();
-
-    Ok(AnimFrames { frames })
+    collect_budgeted(path, apng.into_frames(), FrameBudget::default())
 }
 
 /// Load an animated AVIF sequence from `path`.
@@ -440,6 +488,7 @@ pub fn load_avif_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
         .map_err(|e| avif_anim_decode_err(format!("decoder init: {e:?}")))?;
 
     let mut frames = Vec::with_capacity(sample_table.len());
+    let mut budget = FrameBudget::default();
 
     for indice in sample_table.iter() {
         let start = indice.start_offset.0 as usize;
@@ -460,6 +509,9 @@ pub fn load_avif_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
             .get_picture()
             .map_err(|e| avif_anim_decode_err(format!("get_picture: {e:?}")))?;
 
+        if !budget.admit(picture.width(), picture.height()) && !frames.is_empty() {
+            return Ok(first_frame_only(path, frames));
+        }
         let img = yuv_to_rgba(&picture)?;
 
         let ticks = (indice.end_composition.0 - indice.start_composition.0).max(0) as u64;
@@ -633,14 +685,15 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
     }
 
     let (width, height) = basic_info.size;
+    let stride = rgba_stride(width, height, MAX_IMAGE_BYTES)?;
     // Fold all extra channels (e.g. separate alpha) into the RGBA output by
     // marking them as None (no separate buffer).
     let num_extra = basic_info.extra_channels.len();
     decoder
         .set_pixel_format(JxlPixelFormat::rgba8(num_extra))
         .map_err(jxl_err)?;
-    let stride = width * 4;
     let mut frames = Vec::new();
+    let mut budget = FrameBudget::default();
 
     loop {
         // Parse frame header
@@ -655,6 +708,10 @@ pub fn load_jxl_anim_frames(path: &Path) -> Result<AnimFrames, LoadError> {
             .and_then(|h| h.duration)
             .unwrap_or(100.0);
         let duration = Duration::from_millis((duration_ms.max(10.0)) as u64);
+
+        if !budget.admit(width as u32, height as u32) && !frames.is_empty() {
+            return Ok(first_frame_only(path, frames));
+        }
 
         // Decode pixels
         let mut pixel_buf = vec![0u8; height * stride];
@@ -692,6 +749,18 @@ fn jxl_anim_err(msg: &str) -> LoadError {
         ImageFormatHint::Name("JXL-anim".to_owned()),
         msg.to_owned(),
     )))
+}
+
+/// Row length of a `width × height` RGBA8 buffer, refusing sizes over
+/// `limit` bytes before anything is allocated (dimensions come straight
+/// from the file header).
+#[cfg(feature = "jxl")]
+fn rgba_stride(width: usize, height: usize, limit: usize) -> Result<usize, LoadError> {
+    let stride = width.checked_mul(4).ok_or_else(too_large)?;
+    match stride.checked_mul(height) {
+        Some(total) if total <= limit => Ok(stride),
+        _ => Err(too_large()),
+    }
 }
 
 #[cfg(feature = "jxl")]

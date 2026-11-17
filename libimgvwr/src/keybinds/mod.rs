@@ -33,12 +33,18 @@ impl std::fmt::Display for KeybindError {
 
 impl std::error::Error for KeybindError {}
 
-/// Resolve a key name string (e.g. `"q"`, `"bracketleft"`) to an XKB
-/// [`Keysym`].
+/// Resolve a key name string (e.g. `"q"`, `"bracketleft"`, `"Delete"`) or a
+/// single character (e.g. `"["`, `"="`) to an XKB [`Keysym`].
 ///
 /// Returns [`KeybindError`] if the name is not recognised by xkbcommon.
 pub fn keysym_from_str(name: &str) -> Result<Keysym, KeybindError> {
-    let sym = xkb::keysym_from_name(name, KEYSYM_NO_FLAGS);
+    let mut sym = xkb::keysym_from_name(name, KEYSYM_NO_FLAGS);
+    if sym == Keysym::NoSymbol {
+        let mut chars = name.chars();
+        if let (Some(c), None) = (chars.next(), chars.next()) {
+            sym = xkb::utf32_to_keysym(c.into());
+        }
+    }
     if sym == Keysym::NoSymbol {
         Err(KeybindError(name.to_owned()))
     } else {

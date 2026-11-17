@@ -2,10 +2,14 @@
 mod tests;
 
 #[cfg(feature = "config")]
-use std::{env, error::Error, fs::File, io::Read, path::PathBuf};
+use std::{
+    env,
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 #[cfg(feature = "config")]
-use tracing::{debug, info, warn};
+use tracing::info;
 
 // ── Config structs ────────────────────────────────────────────────────────────
 
@@ -36,79 +40,70 @@ impl Default for Config {
 /// no file I/O or TOML parsing is compiled in.
 #[cfg(not(feature = "config"))]
 impl Config {
-    pub fn load_merged(_override_path: Option<&std::path::Path>) -> Config {
-        Config::default()
+    pub fn load_merged(
+        _override_path: Option<&std::path::Path>,
+        _problems: &mut Vec<String>,
+    ) -> Result<Config, String> {
+        Ok(Config::default())
     }
 }
 
 /// Full implementation: built-in defaults → system → user (XDG/HOME) → override.
 #[cfg(feature = "config")]
 impl Config {
-    fn load(path: &PathBuf) -> Result<Config, Box<dyn Error>> {
-        let mut file = File::open(path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        toml::from_str(&content).map_err(|e: toml::de::Error| e.into())
+    /// Read and parse one config file. Keys nothing reads (typos) are added
+    /// to `problems`.
+    fn load(path: &Path, problems: &mut Vec<String>) -> Result<Config, Box<dyn Error>> {
+        let raw = std::fs::read_to_string(path)?;
+        let mut unknown = Vec::new();
+        let config = serde_ignored::deserialize(toml::Deserializer::parse(&raw)?, |key| {
+            unknown.push(key_path(&key));
+        })?;
+        for key in unknown {
+            problems.push(format!("{}: unknown key `{key}` ignored", path.display()));
+        }
+        Ok(config)
     }
 
-    pub fn load_merged(override_path: Option<&std::path::Path>) -> Config {
+    /// Layer the system, user and `--config` files over the defaults.
+    ///
+    /// Problems are collected in `problems` for the caller to log once logging
+    /// is set up (it is configured from this very config): a broken system or
+    /// user file is skipped, while a `--config` file that cannot be read or
+    /// parsed is an error, since the user asked for it explicitly.
+    pub fn load_merged(
+        override_path: Option<&Path>,
+        problems: &mut Vec<String>,
+    ) -> Result<Config, String> {
         let mut config = Config::default();
 
-        let system = Config::get_system_path();
-        if system.exists() {
-            match Config::load(&system) {
-                Ok(c) => {
-                    info!(path = %system.display(), "loaded system config");
-                    config = Config::merge(config, c);
-                }
-                Err(e) => {
-                    warn!(path = %system.display(), error = %e, "failed to parse system config")
-                }
-            }
-        }
-
         let user = Config::get_xdg_path().or_else(|_| Config::get_home_path());
-        match user {
-            Ok(ref p) if p.exists() => match Config::load(p) {
+        if let Err(e) = &user {
+            problems.push(format!("no user config: {e}"));
+        }
+        let implicit = std::iter::once(Config::get_system_path()).chain(user.ok());
+        for path in implicit.filter(|p| p.exists()) {
+            match Config::load(&path, problems) {
                 Ok(c) => {
-                    info!(path = %p.display(), "loaded user config");
+                    info!(path = %path.display(), "loaded config");
                     config = Config::merge(config, c);
                 }
-                Err(e) => warn!(path = %p.display(), error = %e, "failed to parse user config"),
-            },
-            Err(e) => warn!(error = %e, "could not resolve user config path"),
-            _ => {}
+                Err(e) => problems.push(format!("{} ignored: {e}", path.display())),
+            }
         }
 
         if let Some(path) = override_path {
-            match Config::load(&path.to_path_buf()) {
-                Ok(c) => {
-                    info!(path = %path.display(), "loaded --config override");
-                    config = Config::merge(config, c);
-                }
-                Err(e) => {
-                    warn!(path = %path.display(), error = %e, "failed to parse --config override")
-                }
-            }
+            let c = Config::load(path, problems).map_err(|e| format!("{}: {e}", path.display()))?;
+            info!(path = %path.display(), "loaded --config override");
+            config = Config::merge(config, c);
         }
 
-        let w = config.window.as_ref();
-        let v = config.viewer.as_ref();
-        debug!(
-            decorations = w.and_then(|w| w.decorations).unwrap_or(false),
-            antialiasing = w.and_then(|w| w.antialiasing).unwrap_or(true),
-            filter = ?v.and_then(|v| v.filter_method.as_ref()),
-            min_scale = v.and_then(|v| v.min_scale).unwrap_or(0.1),
-            max_scale = v.and_then(|v| v.max_scale).unwrap_or(100.0),
-            scale_step = v.and_then(|v| v.scale_step).unwrap_or(0.08),
-            "effective config"
-        );
-
-        config
+        Ok(config)
     }
 
     pub fn get_xdg_path() -> Result<PathBuf, Box<dyn Error>> {
         env::var_os("XDG_CONFIG_HOME")
+            .filter(|p| !p.is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| "XDG_CONFIG_HOME not set".into())
             .map(|p| p.join("imgvwr").join("config.toml"))
@@ -116,8 +111,9 @@ impl Config {
 
     pub fn get_home_path() -> Result<PathBuf, Box<dyn Error>> {
         env::var_os("HOME")
+            .filter(|p| !p.is_empty())
             .map(PathBuf::from)
-            .ok_or_else(|| "HOME not set".into())
+            .ok_or_else(|| "neither XDG_CONFIG_HOME nor HOME is set".into())
             .map(|p| p.join(".config").join("imgvwr").join("config.toml"))
     }
 
@@ -147,6 +143,23 @@ impl Config {
                 level: o.level.or(b.level),
             }),
         }
+    }
+}
+
+/// `viewer.scale_stepp`: an ignored key as written in the file.
+#[cfg(feature = "config")]
+pub(crate) fn key_path(path: &serde_ignored::Path<'_>) -> String {
+    use serde_ignored::Path;
+    match path {
+        Path::Root => String::new(),
+        Path::Seq { parent, index } => format!("{}[{index}]", key_path(parent)),
+        Path::Map { parent, key } => match key_path(parent) {
+            p if p.is_empty() => key.clone(),
+            p => format!("{p}.{key}"),
+        },
+        Path::Some { parent }
+        | Path::NewtypeStruct { parent }
+        | Path::NewtypeVariant { parent } => key_path(parent),
     }
 }
 

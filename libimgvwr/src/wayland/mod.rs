@@ -10,18 +10,20 @@
 
 pub mod keyboard;
 pub mod shm;
+#[cfg(test)]
+mod tests;
 
-use std::io;
+use std::{io, time::Duration};
 
 #[cfg(feature = "decorations")]
 use tracing::warn;
 use tracing::{debug, info};
 
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle, WEnum,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat,
+        wl_shm, wl_shm_pool, wl_surface,
     },
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -37,19 +39,48 @@ use crate::wayland::{
     shm::ShmPool,
 };
 
+/// Linux evdev code of the left mouse button, the one that drags the image.
+const BTN_LEFT: u32 = 0x110;
+
 // ── Input events ────────────────────────────────────────────────────────────
 
 /// Input events collected during dispatch and consumed by the event loop.
 pub enum InputEvent {
     /// A key was pressed; carries the resolved XKB keysym.
     Key(Keysym),
-    /// Vertical scroll wheel tick. Positive = scroll down.
+    /// Vertical scroll in wheel notches (fractional for high-resolution
+    /// wheels and touchpads). Positive = zoom in (scroll up).
     /// Carries the pointer position at the time of the event (surface coords).
     Scroll { delta: f32, cursor: (f32, f32) },
     /// Left mouse button pressed (`true`) or released (`false`).
     PointerButton { pressed: bool },
     /// Mouse moved while the button was held; delta in surface pixels.
     PointerMotion { dx: f32, dy: f32 },
+}
+
+/// Vertical scroll amounts of one `wl_pointer` frame.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub(crate) struct ScrollFrame {
+    /// Sum of `axis` values, in surface-local scroll units.
+    pub value: f64,
+    /// Sum of `axis_value120` values (120 per wheel notch), when sent.
+    pub value120: Option<i32>,
+}
+
+/// `axis` units per wheel notch when the compositor does not say: libinput
+/// reports 15° of rotation per notch and compositors pass that through.
+const AXIS_UNITS_PER_NOTCH: f64 = 15.0;
+
+impl ScrollFrame {
+    /// Distance scrolled in wheel notches (positive = down), or `None` when
+    /// the frame did not scroll vertically.
+    pub(crate) fn notches(&self) -> Option<f32> {
+        let notches = match self.value120 {
+            Some(v120) => f64::from(v120) / 120.0,
+            None => self.value / AXIS_UNITS_PER_NOTCH,
+        };
+        (notches != 0.0).then_some(notches as f32)
+    }
 }
 
 // ── WaylandState ────────────────────────────────────────────────────────────
@@ -83,6 +114,12 @@ pub struct WaylandState {
     pointer: Option<wl_pointer::WlPointer>,
     pointer_pos: (f64, f64),
     pointer_pressed: bool,
+    /// Vertical scrolling received in the current pointer frame.
+    scroll: ScrollFrame,
+    /// Which of the two SHM buffers the compositor has not released yet.
+    shm_busy: [bool; 2],
+    /// A frame callback was requested and has not fired yet.
+    frame_pending: bool,
 
     /// Set to `true` when the compositor requests the window be closed.
     pub closed: bool,
@@ -114,10 +151,26 @@ impl WaylandState {
             pointer: None,
             pointer_pos: (0.0, 0.0),
             pointer_pressed: false,
+            scroll: ScrollFrame::default(),
+            shm_busy: [false; 2],
+            frame_pending: false,
             closed: false,
             needs_redraw: false,
             window_size: initial_size,
             pending_events: Vec::new(),
+        }
+    }
+
+    /// Turn the scrolling collected in this pointer frame into one
+    /// [`InputEvent::Scroll`].
+    fn finish_scroll(&mut self) {
+        let scroll = std::mem::take(&mut self.scroll);
+        if let Some(notches) = scroll.notches() {
+            let cursor = (self.pointer_pos.0 as f32, self.pointer_pos.1 as f32);
+            self.pending_events.push(InputEvent::Scroll {
+                delta: -notches,
+                cursor,
+            });
         }
     }
 
@@ -148,10 +201,28 @@ pub struct WaylandContext {
     /// Public Wayland state — surfaces, globals, pending events, flags.
     pub state: WaylandState,
     event_queue: EventQueue<WaylandState>,
-    /// SHM pool backing the pixel buffer. Created on first commit; resized as needed.
-    shm_pool: Option<ShmPool>,
-    /// The `wl_buffer` attached in the previous frame. Destroyed before each new commit.
-    prev_buffer: Option<wl_buffer::WlBuffer>,
+    /// Two SHM buffers that take turns. Created on the first commit and
+    /// recreated when the window size changes.
+    shm: Option<ShmBuffers>,
+}
+
+/// Two same-sized `wl_buffer`s in one SHM pool. A frame is written into a
+/// buffer the compositor has released, never into the one it may still be
+/// reading.
+struct ShmBuffers {
+    pool: ShmPool,
+    wl_pool: wl_shm_pool::WlShmPool,
+    size: (u32, u32),
+    buffers: [wl_buffer::WlBuffer; 2],
+}
+
+impl Drop for ShmBuffers {
+    fn drop(&mut self) {
+        for buffer in &self.buffers {
+            buffer.destroy();
+        }
+        self.wl_pool.destroy();
+    }
 }
 
 impl WaylandContext {
@@ -227,61 +298,90 @@ impl WaylandContext {
             conn,
             state,
             event_queue,
-            shm_pool: None,
-            prev_buffer: None,
+            shm: None,
         })
     }
 
-    /// Write `pixels` (ARGB8888, `w × h × 4` bytes) into a Wayland SHM buffer
-    /// and commit it to the surface.
+    /// Write `pixels` (ARGB8888, `w × h × 4` bytes) into a free SHM buffer,
+    /// commit it, and ask for a frame callback.
+    ///
+    /// Call it only when [`WaylandContext::ready_for_frame`] is true: until
+    /// the compositor signals the callback, another frame would never be
+    /// shown (for example while the window is on a hidden workspace).
     pub fn commit_frame(&mut self, pixels: &[u8], w: u32, h: u32) -> io::Result<()> {
-        let size = (w * h * 4) as usize;
-
-        // Create or grow the SHM backing store.
-        match &self.shm_pool {
-            None => self.shm_pool = Some(ShmPool::create(size)?),
-            Some(p) if p.size < size => self.shm_pool.as_mut().unwrap().resize(size)?,
-            _ => {}
+        let frame_len = w as usize * h as usize * 4;
+        if pixels.len() != frame_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "pixel buffer does not match the frame size",
+            ));
+        }
+        if self.shm.as_ref().is_none_or(|b| b.size != (w, h)) {
+            // Free the old buffers before mapping the new ones.
+            self.shm = None;
+            self.shm = Some(self.create_shm_buffers(w, h)?);
+            self.state.shm_busy = [false; 2];
         }
 
-        self.shm_pool.as_mut().unwrap().as_mut_slice()[..size].copy_from_slice(pixels);
-
-        // Build a wl_shm_pool + wl_buffer for this frame.
-        let stride = w as i32 * 4;
-        let wl_pool = {
-            let fd = self.shm_pool.as_ref().unwrap().fd();
-            let wl_shm = self
-                .state
-                .wl_shm()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "wl_shm not bound"))?;
-            wl_shm.create_pool(fd, size as i32, self.state.qh(), ())
+        // Normally the other buffer was released long ago; if the compositor
+        // still holds both, wait for one.
+        let slot = loop {
+            if let Some(slot) = self.state.shm_busy.iter().position(|busy| !busy) {
+                break slot;
+            }
+            self.dispatch(None)?;
         };
-        let buffer = wl_pool.create_buffer(
-            0,
-            w as i32,
-            h as i32,
-            stride,
-            wl_shm::Format::Argb8888,
-            self.state.qh(),
-            (),
-        );
-        wl_pool.destroy();
 
-        // Destroy the previous frame's buffer before the new one takes the surface slot.
-        if let Some(prev) = self.prev_buffer.take() {
-            prev.destroy();
-        }
+        let shm = self.shm.as_mut().expect("buffers were just created");
+        shm.pool.as_mut_slice()[slot * frame_len..][..frame_len].copy_from_slice(pixels);
 
         let surface = self
             .state
             .surface()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "surface not available"))?;
-        surface.attach(Some(&buffer), 0, 0);
+        surface.attach(Some(&shm.buffers[slot]), 0, 0);
         surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.frame(self.state.qh(), ());
         surface.commit();
-
-        self.prev_buffer = Some(buffer);
+        self.state.shm_busy[slot] = true;
+        self.state.frame_pending = true;
         self.flush()
+    }
+
+    fn create_shm_buffers(&self, w: u32, h: u32) -> io::Result<ShmBuffers> {
+        let frame_len = w as usize * h as usize * 4;
+        let pool_len = i32::try_from(frame_len * 2)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "window too large"))?;
+        let pool = ShmPool::create(pool_len as usize)?;
+        let wl_shm = self
+            .state
+            .wl_shm()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "wl_shm not bound"))?;
+        let wl_pool = wl_shm.create_pool(pool.fd(), pool_len, self.state.qh(), ());
+        let buffer = |slot: usize| {
+            wl_pool.create_buffer(
+                (slot * frame_len) as i32,
+                w as i32,
+                h as i32,
+                w as i32 * 4,
+                wl_shm::Format::Argb8888,
+                self.state.qh(),
+                slot,
+            )
+        };
+        let buffers = [buffer(0), buffer(1)];
+        Ok(ShmBuffers {
+            pool,
+            wl_pool,
+            size: (w, h),
+            buffers,
+        })
+    }
+
+    /// Whether the compositor wants a new frame: false between a
+    /// [`WaylandContext::commit_frame`] and its frame callback.
+    pub fn ready_for_frame(&self) -> bool {
+        !self.state.frame_pending
     }
 
     /// Flush the outgoing Wayland socket buffer.
@@ -291,75 +391,46 @@ impl WaylandContext {
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))
     }
 
-    /// Dispatch pending Wayland events.
+    /// Wait up to `timeout` for compositor events and dispatch them.
     ///
-    /// Without any animated-format feature: uses `blocking_dispatch`, which
-    /// parks the thread until a compositor event arrives — correct and idle for
-    /// static images.
-    ///
-    /// With an animated-format feature (e.g. `gif`): uses a `poll` timeout so
-    /// the animation loop can call `tick()` on a regular cadence even without
-    /// user input.
-    pub fn dispatch(&mut self, timeout_ms: i32) -> io::Result<()> {
-        #[cfg(any(
-            feature = "gif",
-            feature = "avif-anim",
-            feature = "jxl-anim",
-            feature = "webp-anim",
-            feature = "apng"
-        ))]
-        {
-            use std::os::fd::AsFd;
+    /// `None` waits until an event arrives; `Some(Duration::ZERO)` only
+    /// dispatches what is already readable. Callers pass a zero timeout while
+    /// a redraw is pending, so the first frame is drawn without waiting for
+    /// input: a window that never got a buffer is never mapped and so never
+    /// receives any.
+    pub fn dispatch(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        use std::os::fd::AsFd;
 
-            self.flush()?;
+        self.flush()?;
 
-            if let Some(guard) = self.event_queue.prepare_read() {
-                let fd = self.conn.as_fd();
-                let mut pfd = [rustix::event::PollFd::new(
-                    &fd,
-                    rustix::event::PollFlags::IN,
-                )];
-                let timeout_spec;
-                let timeout = if timeout_ms < 0 {
-                    None
-                } else {
-                    timeout_spec = rustix::time::Timespec {
-                        tv_sec: (timeout_ms / 1000) as i64,
-                        tv_nsec: ((timeout_ms % 1000) * 1_000_000) as i64,
-                    };
-                    Some(&timeout_spec)
-                };
-                let _ = rustix::event::poll(&mut pfd, timeout);
-                // Always attempt the read: WouldBlock means no data arrived
-                // (spurious wakeup or data already drained), which is fine.
-                match guard.read() {
-                    Ok(_) => {}
-                    Err(wayland_client::backend::WaylandError::Io(e))
-                        if e.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => return Err(io::Error::other(e)),
-                }
+        if let Some(guard) = self.event_queue.prepare_read() {
+            let fd = self.conn.as_fd();
+            let mut pfd = [rustix::event::PollFd::new(
+                &fd,
+                rustix::event::PollFlags::IN,
+            )];
+            let timeout = timeout.map(|t| rustix::time::Timespec {
+                tv_sec: t.as_secs().try_into().unwrap_or(i64::MAX),
+                tv_nsec: t.subsec_nanos().into(),
+            });
+            match rustix::event::poll(&mut pfd, timeout.as_ref()) {
+                Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                Err(e) => return Err(e.into()),
             }
-
-            self.event_queue
-                .dispatch_pending(&mut self.state)
-                .map(|_| ())
-                .map_err(io::Error::other)
+            // Always attempt the read: WouldBlock means no data arrived
+            // (timeout or spurious wakeup), which is fine.
+            match guard.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(e))
+                    if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(io::Error::other(e)),
+            }
         }
 
-        #[cfg(not(any(
-            feature = "gif",
-            feature = "avif-anim",
-            feature = "jxl-anim",
-            feature = "webp-anim",
-            feature = "apng"
-        )))]
-        {
-            let _ = timeout_ms;
-            self.event_queue
-                .blocking_dispatch(&mut self.state)
-                .map(|_| ())
-                .map_err(io::Error::other)
-        }
+        self.event_queue
+            .dispatch_pending(&mut self.state)
+            .map(|_| ())
+            .map_err(io::Error::other)
     }
 
     /// Raw `wl_display *` pointer for wgpu surface creation.
@@ -378,7 +449,6 @@ impl WaylandContext {
     /// `WaylandContext`. Must not be used after `WaylandContext` is dropped.
     #[cfg(feature = "dmabuf")]
     pub fn surface_ptr(&self) -> std::ptr::NonNull<std::ffi::c_void> {
-        use wayland_client::Proxy;
         let ptr = self
             .state
             .surface
@@ -390,18 +460,15 @@ impl WaylandContext {
         std::ptr::NonNull::new(ptr).expect("wl_surface must not be null")
     }
 
-    /// Set the XDG toplevel window title.
+    /// Set the XDG toplevel window title, shown by task switchers and bars
+    /// (and by server-side decorations, when used).
     ///
-    /// Only available when the `decorations` feature is enabled. The title is
-    /// buffered and sent on the next Wayland socket flush (i.e. the next
-    /// `dispatch` call or `commit_frame`).
-    #[cfg(feature = "decorations")]
+    /// The title is buffered and sent on the next Wayland socket flush (i.e.
+    /// the next `dispatch` call or `commit_frame`).
     pub fn set_title(&mut self, title: &str) {
         if let Some(toplevel) = &self.state.xdg_toplevel {
             debug!(title, "setting window title");
             toplevel.set_title(title.to_string());
-        } else {
-            warn!("set_title called but xdg_toplevel is not yet initialised");
         }
     }
 }
@@ -567,14 +634,27 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandState {
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandState {
     fn event(
         state: &mut Self,
-        _: &wl_pointer::WlPointer,
+        pointer: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         match event {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                // Zooming before the first motion anchors on this position.
+                state.pointer_pos = (surface_x, surface_y);
+            }
+            wl_pointer::Event::Leave { .. } => {
+                // No release arrives for a press the compositor took away.
+                state.pointer_pressed = false;
+            }
             wl_pointer::Event::Button {
+                button: BTN_LEFT,
                 state: WEnum::Value(btn),
                 ..
             } => {
@@ -603,15 +683,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandState {
                 value,
                 ..
             } => {
-                // Normalise: raw axis value is ~10–15 units per wheel notch on most
-                // compositors (wlroots/libinput default is 15). Dividing by 10.0 maps
-                // one notch to ≈1.0, so `scale_step` in config means "zoom % per notch".
-                let cursor = (state.pointer_pos.0 as f32, state.pointer_pos.1 as f32);
-                state.pending_events.push(InputEvent::Scroll {
-                    delta: -value as f32 / 10.0,
-                    cursor,
-                });
+                state.scroll.value += value;
+                if pointer.version() < 5 {
+                    // No frame events before v5: every axis event stands alone.
+                    state.finish_scroll();
+                }
             }
+            wl_pointer::Event::AxisValue120 {
+                axis: WEnum::Value(wl_pointer::Axis::VerticalScroll),
+                value120,
+            } => {
+                *state.scroll.value120.get_or_insert(0) += value120;
+            }
+            wl_pointer::Event::Frame => state.finish_scroll(),
             _ => {}
         }
     }
@@ -685,15 +769,33 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for WaylandState {
     }
 }
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for WaylandState {
+impl Dispatch<wl_buffer::WlBuffer, usize> for WaylandState {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &wl_buffer::WlBuffer,
-        _: wl_buffer::Event,
+        event: wl_buffer::Event,
+        slot: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            state.shm_busy[*slot] = false;
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.frame_pending = false;
+        }
     }
 }
 

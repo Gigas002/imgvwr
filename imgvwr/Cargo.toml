@@ -5,7 +5,6 @@ description = "Minimal Wayland image viewer"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 [[bin]]
 name = "imgvwr"
@@ -14,7 +13,7 @@ path = "src/main.rs"
 [features]
 default = ["png", "logging", "config", "keybinds"]
 logging = ["dep:tracing-subscriber"]
-config = ["dep:toml", "dep:serde"]
+config = ["dep:toml", "dep:serde", "dep:serde_ignored"]
 keybinds = []
 png = ["libimgvwr/png"]
 jpeg = ["libimgvwr/jpeg"]
@@ -40,6 +39,10 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = { version = "4", optional = true }
 clap_complete_nushell = { version = "4", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+serde_ignored = { version = "0.1", optional = true }
 toml = { version = "1", optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
