@@ -12,11 +12,11 @@ default = ["png"]
 png = ["image/png"]
 jpeg = ["image/jpeg"]
 webp = ["image/webp"]
-avif = ["image/avif-native"]
+avif = ["dep:zenavif", "dep:zenpixels-convert"]
 jxl = ["dep:jxl"]
 jxl-anim = ["jxl"]
 gif = ["image/gif"]
-avif-anim = ["dep:dav1d", "dep:mp4parse"]
+avif-anim = ["avif"]
 webp-anim = ["webp"]
 apng = ["png"]
 decorations = []
@@ -37,8 +37,8 @@ vello = { version = "0.12", optional = true, default-features = false, features 
 raw-window-handle = { version = "0.6", optional = true }
 pollster = { version = "1", optional = true }
 jxl = { version = "0.8", optional = true, default-features = false }
-dav1d = { version = "0.11", optional = true }
-mp4parse = { version = "0.17", optional = true, features = ["unstable-api"] }
+zenavif = { version = "0.1.6", optional = true }
+zenpixels-convert = { version = "0.2", optional = true, default-features = false, features = ["rgb"] }
 
 [dev-dependencies]
 tempfile = "3"

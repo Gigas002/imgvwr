@@ -525,13 +525,43 @@ fn jxl_static_rejected_by_anim_loader() {
 #[cfg(feature = "avif-anim")]
 #[test]
 fn avif_static_rejected_by_anim_loader() {
-    // Static AVIF uses HEIF image items, not a video track; mp4parse either
-    // fails to parse the container (Decode) or finds no AV1 track (UnsupportedFormat).
+    // A still AVIF is an image item, not a sequence; the caller falls back to load().
     let bytes = include_bytes!("../../tests/fixtures/4x4.avif");
     let mut tmp = Builder::new().suffix(".avif").tempfile().unwrap();
     tmp.write_all(bytes).unwrap();
     let result = super::load_avif_anim_frames(tmp.path());
-    assert!(result.is_err());
+    assert!(matches!(result, Err(LoadError::UnsupportedFormat)));
+}
+
+#[cfg(feature = "avif")]
+#[test]
+#[ignore = "zenavif 0.1.6 decodes identity-matrix (lossless) AVIF as BT.601; fixed in 0.2"]
+fn load_avif_alpha() {
+    // Left half opaque red, right half fully transparent (lossless).
+    let bytes = include_bytes!("../../tests/fixtures/4x4_alpha.avif");
+    let mut tmp = Builder::new().suffix(".avif").tempfile().unwrap();
+    tmp.write_all(bytes).unwrap();
+    let img = load(tmp.path()).unwrap().to_rgba8();
+    assert_eq!(img.get_pixel(0, 0).0, [255, 0, 0, 255]);
+    assert_eq!(img.get_pixel(3, 3).0[3], 0);
+}
+
+#[cfg(feature = "avif-anim")]
+#[test]
+#[ignore = "zenavif 0.1.6 decodes identity-matrix (lossless) AVIF as BT.601; fixed in 0.2"]
+fn load_avif_anim_alpha() {
+    // Two 100 ms frames, red then blue, each with a transparent right half.
+    let bytes = include_bytes!("../../tests/fixtures/4x4_anim_alpha.avif");
+    let mut tmp = Builder::new().suffix(".avif").tempfile().unwrap();
+    tmp.write_all(bytes).unwrap();
+    let result = super::load_avif_anim_frames(tmp.path()).unwrap();
+    assert_eq!(result.frames.len(), 2);
+    for ((img, delay), rgb) in result.frames.iter().zip([[255, 0, 0], [0, 0, 255]]) {
+        let img = img.to_rgba8();
+        assert_eq!(img.get_pixel(0, 0).0, [rgb[0], rgb[1], rgb[2], 255]);
+        assert_eq!(img.get_pixel(3, 0).0[3], 0);
+        assert_eq!(*delay, Duration::from_millis(100));
+    }
 }
 
 #[cfg(feature = "gif")]
