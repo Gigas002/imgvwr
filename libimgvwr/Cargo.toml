@@ -37,7 +37,7 @@ vello = { version = "0.12", optional = true, default-features = false, features 
 raw-window-handle = { version = "0.6", optional = true }
 pollster = { version = "1", optional = true }
 jxl = { version = "0.8", optional = true, default-features = false }
-dav1d = { version = "0.11", optional = true }
+dav1d = { version = "0.12", optional = true }
 mp4parse = { version = "0.17", optional = true, features = ["unstable-api"] }
 
 [dev-dependencies]
