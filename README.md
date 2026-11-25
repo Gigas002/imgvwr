@@ -21,7 +21,6 @@ A minimal, fast image viewer for Wayland, written in Rust.
 | `dmabuf`                     | Compositor with `zwp_linux_dmabuf_v1` support (implies `gpu-vulkan`) |
 | `decorations`                | Compositor with `zxdg_decoration_manager_v1` support                 |
 | `avif` / `avif-anim`         | `libdav1d`                                                           |
-| `jxl` / `jxl-anim`           | `libjxl`                                                             |
 | `gif` / `webp-anim` / `apng` | `libc` (virtually always present)                                    |
 
 **Build-time:**
